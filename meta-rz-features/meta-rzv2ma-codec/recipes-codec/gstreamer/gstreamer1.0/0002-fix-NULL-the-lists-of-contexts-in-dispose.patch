@@ -1,0 +1,11 @@
+diff -ur a/gst/gstelement.c b/gst/gstelement.c
+--- a/gst/gstelement.c	2021-01-13 20:25:58.000000000 +0900
++++ b/gst/gstelement.c	2021-08-27 22:08:08.000000000 +0900
+@@ -3304,6 +3304,7 @@
+   gst_object_replace ((GstObject **) clock_p, NULL);
+   gst_object_replace ((GstObject **) bus_p, NULL);
+   g_list_free_full (element->contexts, (GDestroyNotify) gst_context_unref);
++  element->contexts = NULL;
+   GST_OBJECT_UNLOCK (element);
+ 
+   GST_CAT_INFO_OBJECT (GST_CAT_REFCOUNTING, element, "%p parent class dispose",

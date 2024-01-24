@@ -1,0 +1,27 @@
+--- a/omx/gstomxh265enc.c	2022-10-13 10:29:05.000000000 +0900
++++ b/omx/gstomxh265enc.c	2022-10-12 11:50:02.000000000 +0900
+@@ -565,13 +565,23 @@
+     }
+ 
+     level_string = gst_structure_get_string (s, "level");
++#ifdef OMX_TARGET_RCAR_RZV2M
++    if (!level_string)
++      level_string = "5";
++    tier_string = gst_structure_get_string (s, "tier");
++    if (!tier_string)
++      tier_string = "main";
++    level = gst_omx_h265_utils_get_level_from_str (level_string, tier_string);
++    if (level == OMX_VIDEO_HEVCLevelUnknown)
++      goto unsupported_level;
++#else
+     tier_string = gst_structure_get_string (s, "tier");
+     if (level_string && tier_string) {
+       level = gst_omx_h265_utils_get_level_from_str (level_string, tier_string);
+       if (level == OMX_VIDEO_HEVCLevelUnknown)
+         goto unsupported_level;
+     }
+-
++#endif
+     gst_caps_unref (peercaps);
+   }
+ 

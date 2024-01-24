@@ -1,0 +1,251 @@
+diff --git a/omx/gstomxbufferpool.c b/omx/gstomxbufferpool.c
+--- a/omx/gstomxbufferpool.c
++++ b/omx/gstomxbufferpool.c
+@@ -914,6 +914,7 @@
+     omx_buf = gst_omx_buffer_get_omx_buf (buffer);
+     if (pool->port->port_def.eDir == OMX_DirOutput && !omx_buf->used &&
+         !pool->deactivated) {
++#if ((!defined (OMX_TARGET_RCAR_RZV2M)) || (!defined (USE_RCAR_DRP)))
+       /* Release back to the port, can be filled again */
+       err = gst_omx_port_release_buffer (pool->port, omx_buf);
+       if (err != OMX_ErrorNone) {
+@@ -921,6 +922,7 @@
+             ("Failed to relase output buffer to component: %s (0x%08x)",
+                 gst_omx_error_to_string (err), err));
+       }
++#endif
+     } else if (pool->port->port_def.eDir == OMX_DirInput) {
+       gst_omx_port_requeue_buffer (pool->port, omx_buf);
+     }
+
+diff --git a/omx/gstomxvideodec.c b/omx/gstomxvideodec.c
+--- a/omx/gstomxvideodec.c
++++ b/omx/gstomxvideodec.c
+@@ -791,40 +791,10 @@
+     mmngr_hard_addr = OmxrConvertWorkBufferVirtToHard(inbuf->omx_buf->pBuffer);
+     output_mmngr_hard_addr = GstOmxConvertWorkBufferVirtToHard((uint8_t*)GST_VIDEO_FRAME_PLANE_DATA (&frame, 0));
+ 
+-    if (output_mmngr_hard_addr != 0) {
+-      crop_data.src_adr     = mmngr_hard_addr;
+-      crop_data.dst_adr     = output_mmngr_hard_addr;
+-      crop_data.src_width   = nstride;
+-      crop_data.src_height  = nslice;
+-      switch (GST_VIDEO_INFO_FORMAT (vinfo)) {
+-        case GST_VIDEO_FORMAT_I420:
+-          crop_data.src_format  = 1;
+-          break;
+-        case GST_VIDEO_FORMAT_NV12:
+-          crop_data.src_format  = 0;
+-          break;
+-        default:
+-          g_assert_not_reached ();
+-          break;
+-      }
+-      crop_data.crop_left   = cinfo.crop_left;
+-      crop_data.crop_right  = nstride - GST_VIDEO_INFO_WIDTH (vinfo) + cinfo.crop_left;
+-      crop_data.crop_top    = cinfo.crop_top;
+-      crop_data.crop_bottom = nslice - GST_VIDEO_INFO_HEIGHT (vinfo) + cinfo.crop_top;
+-      drp_ret = DRP_Config_init();
+-      if (drp_ret == 0) {
+-        drp_ret = DRP_Crop(&crop_data);
+-      }
+-      DRP_Config_deinit();
+-    } else {
+-      gint mmngr_ret = 0;
+-      VIDEO_BUFFRE_INFO buf_mmngr;
+-
+-      buf_mmngr.size = GST_VIDEO_FRAME_SIZE(&frame);
+-      ret = mmngr_alloc_in_user_ext(&buf_mmngr.id, buf_mmngr.size, &buf_mmngr.hard_addr, &buf_mmngr.user_virt_addr, MMNGR_VA_SUPPORT, NULL);
+-      if (R_MM_OK == mmngr_ret) {
++    if ((0 != mmngr_hard_addr) && (GST_IS_OMX_H264_DEC (self))) {
++      if (0 != output_mmngr_hard_addr) {
+         crop_data.src_adr     = mmngr_hard_addr;
+-        crop_data.dst_adr     = buf_mmngr.hard_addr;
++        crop_data.dst_adr     = output_mmngr_hard_addr;
+         crop_data.src_width   = nstride;
+         crop_data.src_height  = nslice;
+         switch (GST_VIDEO_INFO_FORMAT (vinfo)) {
+@@ -839,25 +809,57 @@
+             break;
+         }
+         crop_data.crop_left   = cinfo.crop_left;
+-        crop_data.crop_right  = nstride - GST_VIDEO_INFO_WIDTH (vinfo) + cinfo.crop_left;
++        crop_data.crop_right  = nstride - cinfo.crop_nWidth - cinfo.crop_left;
+         crop_data.crop_top    = cinfo.crop_top;
+-        crop_data.crop_bottom = nslice - GST_VIDEO_INFO_HEIGHT (vinfo) + cinfo.crop_top;
++        crop_data.crop_bottom = nslice - cinfo.crop_nHeight - cinfo.crop_top;
+         drp_ret = DRP_Config_init();
+         if (drp_ret == 0) {
+           drp_ret = DRP_Crop(&crop_data);
++        }
++        DRP_Config_deinit();
++      } else {
++        gint mmngr_ret = 0;
++        VIDEO_BUFFRE_INFO buf_mmngr;
++
++        buf_mmngr.size = GST_VIDEO_FRAME_SIZE(&frame);
++        ret = mmngr_alloc_in_user_ext(&buf_mmngr.id, buf_mmngr.size, &buf_mmngr.hard_addr, &buf_mmngr.user_virt_addr, MMNGR_VA_SUPPORT, NULL);
++        if (R_MM_OK == mmngr_ret) {
++          crop_data.src_adr     = mmngr_hard_addr;
++          crop_data.dst_adr     = buf_mmngr.hard_addr;
++          crop_data.src_width   = nstride;
++          crop_data.src_height  = nslice;
++          switch (GST_VIDEO_INFO_FORMAT (vinfo)) {
++            case GST_VIDEO_FORMAT_I420:
++              crop_data.src_format  = 1;
++              break;
++            case GST_VIDEO_FORMAT_NV12:
++              crop_data.src_format  = 0;
++              break;
++            default:
++              g_assert_not_reached ();
++              break;
++          }
++          crop_data.crop_left   = cinfo.crop_left;
++          crop_data.crop_right  = nstride - cinfo.crop_nWidth - cinfo.crop_left;
++          crop_data.crop_top    = cinfo.crop_top;
++          crop_data.crop_bottom = nslice - cinfo.crop_nHeight - cinfo.crop_top;
++          drp_ret = DRP_Config_init();
+           if (drp_ret == 0) {
+-            DRP_Config_deinit();
+-            memcpy(GST_VIDEO_FRAME_PLANE_DATA (&frame, 0), buf_mmngr.user_virt_addr, buf_mmngr.size);
++            drp_ret = DRP_Crop(&crop_data);
++            if (drp_ret == 0) {
++              DRP_Config_deinit();
++              memcpy(GST_VIDEO_FRAME_PLANE_DATA (&frame, 0), buf_mmngr.user_virt_addr, buf_mmngr.size);
++            }
+           }
++          mmngr_free_in_user_ext(buf_mmngr.id);
+         }
+-        mmngr_free_in_user_ext(buf_mmngr.id);
+       }
+-    }
+     
+-    if (drp_ret == 0) {
+-      ret = TRUE;
+-    }
+-#else
++      if (drp_ret == 0) {
++        ret = TRUE;
++      }
++    } else {
++#endif
+     guint src_stride[GST_VIDEO_MAX_PLANES] = { nstride, 0, };
+     guint src_size[GST_VIDEO_MAX_PLANES] = { nstride * nslice, 0, };
+     gint dst_width[GST_VIDEO_MAX_PLANES] = { 0, };
+@@ -950,6 +952,8 @@
+       src += src_size[p];
+     }
+     ret = TRUE;
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++    }
+ #endif
+ 
+     gst_video_frame_unmap (&frame);
+@@ -2115,6 +2119,7 @@
+ #if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
+       /* Do not negotiate if there is crop */
+       negotiate = TRUE;
++      if (GST_IS_OMX_H264_DEC (self)) {
+       if (self->enable_crop) {
+         if (!get_crop_info (self, &cinfo)) {
+           if (buf)
+@@ -2128,6 +2133,7 @@
+           negotiate = FALSE;
+         }
+       }
++      }
+       if (TRUE == negotiate) {
+ #endif
+       if (!gst_video_decoder_negotiate (GST_VIDEO_DECODER (self))) {
+@@ -2301,8 +2307,10 @@
+       buf = NULL;
+     } else {
+ #if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++      if (GST_IS_OMX_H264_DEC (self)) {
+       gint i, n;
+-      GstBufferPool *pool = NULL;
++      GstBufferPool *bpool = NULL;
++      GstOMXBufferPool *pool = NULL;
+ 
+       n = port->buffers->len;
+       for (i = 0; i < n; i++) {
+@@ -2313,8 +2321,13 @@
+       }
+       g_assert (i != n);
+ 
+-      pool = gst_video_decoder_get_buffer_pool (GST_VIDEO_DECODER (self));
+-      GST_OMX_BUFFER_POOL (pool)->current_buffer_index = i;
++      bpool = gst_video_decoder_get_buffer_pool (GST_VIDEO_DECODER (self));
++      pool = GST_OMX_BUFFER_POOL (bpool);
++      pool->current_buffer_index = i;
++      if (self->dec_out_port != pool->port) {
++        pool->port = self->dec_out_port;
++      }
++      }
+ #endif
+       if ((flow_ret =
+               gst_video_decoder_allocate_output_frame (GST_VIDEO_DECODER
+@@ -2346,7 +2359,11 @@
+   GST_DEBUG_OBJECT (self, "Finished frame: %s", gst_flow_get_name (flow_ret));
+ 
+ #if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
+-  if ((buf) && (FALSE == buf->used)) {
++  gboolean release = TRUE;
++  if ((GST_IS_OMX_H264_DEC (self)) && (TRUE ==  buf->used)) {
++    release = FALSE;
++  }
++  if ((buf) && (TRUE == release)) {
+ #else
+   if (buf) {
+ #endif
+@@ -4035,7 +4052,6 @@
+   GstOMXPort *port;
+ #endif
+ 
+-
+ #if defined (HAVE_GST_GL)
+   {
+ #if ((!defined (OMX_TARGET_RCAR_RZV2M)) || (!defined (USE_RCAR_DRP)))
+@@ -4112,6 +4128,7 @@
+ 
+   g_assert (gst_query_get_n_allocation_pools (query) > 0);
+ #if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++  if (GST_IS_OMX_H264_DEC (self)) {
+   port = self->dec_out_port;
+ 
+   gst_query_parse_nth_allocation_pool (query, 0, &pool, &size, NULL, NULL);
+@@ -4118,6 +4135,14 @@
+   g_assert (pool != NULL);
+   gst_object_unref (pool);
+ 
++  /* Free current gstomxbufferpool */
++  pool = gst_video_decoder_get_buffer_pool (GST_VIDEO_DECODER (self));
++  if (NULL != pool){
++    GST_BUFFER_POOL_GET_CLASS (pool)->stop(pool);
++    g_object_unref(pool);
++  }
++
++  /* Set new gstomxbufferpool */
+   pool = gst_omx_buffer_pool_new (GST_ELEMENT_CAST (self), self->dec,
+           self->dec_out_port, GST_OMX_BUFFER_MODE_SYSTEM_MEMORY);
+ 
+@@ -4137,7 +4162,8 @@
+   }
+ 
+   gst_query_set_nth_allocation_pool(query, 0, pool, size, min_buffers, max_buffers);
+-#else
++  } else {
++#endif
+   gst_query_parse_nth_allocation_pool (query, 0, &pool, NULL, NULL, NULL);
+   g_assert (pool != NULL);
+ 
+@@ -4147,6 +4173,8 @@
+         GST_BUFFER_POOL_OPTION_VIDEO_META);
+   }
+   gst_buffer_pool_set_config (pool, config);
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++  }
+ #endif
+   gst_object_unref (pool);
+ 

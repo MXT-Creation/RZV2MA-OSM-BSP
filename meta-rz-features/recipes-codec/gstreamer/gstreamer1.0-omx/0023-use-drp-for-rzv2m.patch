@@ -1,0 +1,688 @@
+diff -urN a/meson.build b/meson.build
+--- a/meson.build	2022-04-21 10:17:15.000000000 +0900
++++ b/meson.build	2023-03-07 15:58:09.789287714 +0900
+@@ -222,6 +222,14 @@
+     cdata.set('HAVE_MMNGRBUF', 1)
+   endif
+ 
++  # check mmngr library
++  lib_mmngr = cc.find_library('mmngr', required : false)
++  have_mmngr = cc.has_function('mmngr_alloc_in_user_ext', dependencies : lib_mmngr)
++  have_mmngr = cc.has_function('mmngr_free_in_user_ext', dependencies : lib_mmngr)
++  if have_mmngr
++    cdata.set('HAVE_MMNGR', 1)
++  endif
++
+   if get_option('dmabuf_support')
+     # check OMXR_Extension_vdcmn.h
+     have_exvdcmn = cc.has_header(
+@@ -267,6 +275,25 @@
+     cdata.set ('HAVE_VIDEOR_EXT', 1)
+   endif
+ 
++  # check OMX_MmngrList.h
++  if cc.has_header (
++      'OMX_MmngrList.h',
++      args : gst_omx_args)
++    lib_omxr_utility = cc.find_library('omxr_utility', required : false)
++    have_mmngrlist = cc.has_function('OmxrConvertWorkBufferVirtToHard', dependencies : lib_omxr_utility)
++    if have_mmngrlist
++      cdata.set ('HAVE_MMNGRLIST', 1)
++    endif
++  endif
++
++  #check drp_api.h
++  if cc.has_header (
++    'drp_api.h',
++    args : gst_omx_args)
++    lib_drp_api = cc.find_library('drp_api', required : false)
++    cdata.set ('HAVE_DRPAPI', 1)
++  endif
++
+   # check OMXR_Extension_h265d.h
+   if cc.has_header (
+       'OMXR_Extension_h265d.h',
+diff -urN a/omx/gstomx.h b/omx/gstomx.h
+--- a/omx/gstomx.h	2022-04-21 10:17:15.000000000 +0900
++++ b/omx/gstomx.h	2023-03-13 18:36:32.103632248 +0900
+@@ -34,6 +34,7 @@
+ #endif
+ #ifdef USE_OMX_TARGET_RCAR
+ #define OMX_TARGET_RCAR_RZV2M
++#define USE_RCAR_DRP
+ #endif
+ 
+ #ifdef GST_OMX_STRUCT_PACKING
+diff -urN a/omx/gstomxbufferpool.c b/omx/gstomxbufferpool.c
+--- a/omx/gstomxbufferpool.c	2022-04-21 10:17:15.000000000 +0900
++++ b/omx/gstomxbufferpool.c	2023-03-15 16:54:22.829424033 +0900
+@@ -33,6 +33,9 @@
+ #include "OMXR_Extension_vdcmn.h"
+ #endif
+ #include <unistd.h>             /* getpagesize() */
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++#include <mmngr_user_public.h>
++#endif
+ 
+ GST_DEBUG_CATEGORY_STATIC (gst_omx_buffer_pool_debug_category);
+ #define GST_CAT_DEFAULT gst_omx_buffer_pool_debug_category
+@@ -68,6 +71,10 @@
+ 
+ #define GST_OMX_MEMORY_TYPE "openmax"
+ 
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++static GST_OMX_WORKBUFFER_LIST_INFO g_workbuffer_list_info = {NULL, NULL};
++#endif
++
+ static GstMemory *
+ gst_omx_memory_allocator_alloc_dummy (GstAllocator * allocator, gsize size,
+     GstAllocationParams * params)
+@@ -142,6 +149,76 @@
+   GST_OBJECT_FLAG_SET (allocator, GST_ALLOCATOR_FLAG_CUSTOM_ALLOC);
+ }
+ 
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++static GstMemory *
++gst_omx_memory_allocator_alloc_mmngr (GstBufferPool * bpool, GstOMXBuffer * omx_buf)
++{
++  gint ret = 0;
++  guint plane_size = 0;
++  GstOMXBuffer *newbuf = NULL;
++  GstOMXMemory *omxmem = NULL;
++  GstStructure *config = NULL;
++  GST_OMX_WORKBUFFER_ADDR_INFO *list_info = NULL;
++  GstOMXBufferPool *pool = GST_OMX_BUFFER_POOL (bpool);
++
++  /* get allocation size */
++  config = gst_buffer_pool_get_config (bpool);
++  gst_buffer_pool_config_get_params (config, NULL, &plane_size, NULL, NULL);
++  if (0 == plane_size) {
++    GST_ERROR_OBJECT (pool, "Get buffer size failed");
++    return NULL;
++  }
++
++  list_info = malloc(sizeof(GST_OMX_WORKBUFFER_ADDR_INFO));
++  if (NULL == list_info) {
++    GST_ERROR_OBJECT (pool, "Allocate list failed");
++    return NULL;
++  }
++
++  /* allocate buffer */
++  ret = mmngr_alloc_in_user_ext(&list_info->mmngr_id, plane_size, &list_info->hardAddr, &list_info->virtAddr, MMNGR_VA_SUPPORT, NULL);
++  if (R_MM_OK != ret) {
++    GST_ERROR_OBJECT (pool, "Allocate mmngr buffer failed");
++    free(list_info);
++    return NULL;
++  }
++  g_array_append_val (pool->id_array, list_info->mmngr_id);
++
++  /* set new list */
++  list_info->list_prev = NULL;
++  list_info->list_next = NULL;
++  if (g_workbuffer_list_info.list_end != NULL) {
++    ((GST_OMX_WORKBUFFER_ADDR_INFO *)g_workbuffer_list_info.list_end)->list_next = list_info;
++    list_info->list_prev = g_workbuffer_list_info.list_end;
++  }
++  g_workbuffer_list_info.list_end = list_info;
++  if (g_workbuffer_list_info.list_head == NULL) {
++    g_workbuffer_list_info.list_head = list_info;
++  }
++
++  /* set allocate buffer information to GstMemory */
++  newbuf = g_slice_new0 (GstOMXBuffer);
++  newbuf->port = pool->port;
++  newbuf->used = FALSE;
++  newbuf->settings_cookie = pool->port->settings_cookie;
++  newbuf->eglimage = FALSE;
++
++  newbuf->omx_buf = &(list_info->omx_buf);
++  memcpy(newbuf->omx_buf, omx_buf->omx_buf, sizeof(OMX_BUFFERHEADERTYPE));
++  newbuf->omx_buf->pBuffer = list_info->virtAddr;
++  newbuf->omx_buf->nAllocLen = plane_size;
++  list_info->gstomxbuf = newbuf;
++
++  omxmem = g_slice_new (GstOMXMemory);
++  /* the shared memory is always readonly */
++  gst_memory_init (GST_MEMORY_CAST (omxmem), GST_MEMORY_FLAG_NO_SHARE, pool->allocator, NULL,
++      newbuf->omx_buf->nAllocLen, newbuf->port->port_def.nBufferAlignment, 0, newbuf->omx_buf->nAllocLen);
++
++  omxmem->buf = newbuf;
++
++  return GST_MEMORY_CAST (omxmem);
++}
++#else
+ static GstMemory *
+ gst_omx_memory_allocator_alloc (GstAllocator * allocator, GstMemoryFlags flags,
+     GstOMXBuffer * buf)
+@@ -177,6 +254,7 @@
+ 
+   return GST_MEMORY_CAST (mem);
+ }
++#endif
+ 
+ /* Buffer pool for the buffers of an OpenMAX port.
+  *
+@@ -286,8 +364,49 @@
+ {
+   GstOMXBufferPool *pool = GST_OMX_BUFFER_POOL (bpool);
+   gint i = 0;
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++  GstBuffer *buf = NULL;
++  GstOMXMemory *omxmem = NULL;
++  GstOMXBuffer * omxbuf = NULL;
++  GST_OMX_WORKBUFFER_ADDR_INFO *now = NULL;
++#endif
+ 
+   if (pool->buffers) {
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++    for (i = 0; i < pool->buffers->len; i++) {
++      now = g_workbuffer_list_info.list_head;
++      buf = g_ptr_array_index (pool->buffers, i);
++      omxmem = (GstOMXMemory *)gst_buffer_peek_memory (buf, 0);
++      omxbuf = omxmem->buf;
++
++      while (now != NULL) {
++        if (now->gstomxbuf == omxbuf) {
++          mmngr_free_in_user_ext(now->mmngr_id);
++
++          if (NULL == now->list_prev) {
++            g_workbuffer_list_info.list_head = (GST_OMX_WORKBUFFER_ADDR_INFO *)now->list_next;
++          } else {
++            ((GST_OMX_WORKBUFFER_ADDR_INFO *)(now->list_prev))->list_next = now->list_next; 
++          }
++          if (NULL == now->list_next) {
++            g_workbuffer_list_info.list_end = (GST_OMX_WORKBUFFER_ADDR_INFO *)now->list_prev;
++          } else {
++            ((GST_OMX_WORKBUFFER_ADDR_INFO *)(now->list_next))->list_prev = now->list_prev; 
++          }
++          free(now);
++          g_slice_free (GstOMXBuffer, omxbuf);
++          g_slice_free (GstOMXMemory, omxmem);
++          break;
++        } else if (now->mmngr_id < 0) {
++          GST_WARNING_OBJECT (pool, "Invalid mmngr_id");
++        }
++        now = (GST_OMX_WORKBUFFER_ADDR_INFO *)now->list_next;
++      }
++    }
++    g_array_free (pool->id_array, TRUE);
++    /* Remove any buffers that are there */
++    g_ptr_array_set_size (pool->buffers, 0);
++#else
+     /* When not using the default GstBufferPool::GstAtomicQueue then
+      * GstBufferPool::free_buffer is not called while stopping the pool
+      * (because the queue is empty) */
+@@ -297,6 +416,7 @@
+ 
+     /* Remove any buffers that are there */
+     g_ptr_array_set_size (pool->buffers, 0);
++#endif
+   }
+ 
+   /* Remove any buffers that are there */
+@@ -583,7 +703,15 @@
+         gst_buffer_append_memory (buf, mem);
+       }
+     } else {
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++      mem = gst_omx_memory_allocator_alloc_mmngr(bpool, omx_buf);
++      if (!mem) {
++        GST_ERROR_OBJECT (pool, "Can not create buffer for DRP");
++        return GST_FLOW_ERROR;
++      }
++#else
+       mem = gst_omx_memory_allocator_alloc (pool->allocator, 0, omx_buf);
++#endif
+       gst_buffer_append_memory (buf, mem);
+     }
+ 
+@@ -617,6 +745,7 @@
+         break;
+     }
+ 
++#if ((!defined (OMX_TARGET_RCAR_RZV2M)) || (!defined (USE_RCAR_DRP)))
+     if (pool->add_videometa) {
+       pool->need_copy = FALSE;
+     } else {
+@@ -656,6 +785,7 @@
+           GST_VIDEO_INFO_HEIGHT (&pool->video_info),
+           GST_VIDEO_INFO_N_PLANES (&pool->video_info), offset, stride);
+     }
++#endif
+   }
+ 
+   gst_omx_buffer_set_omx_buf (buf, omx_buf);
+@@ -785,6 +915,7 @@
+     omx_buf = gst_omx_buffer_get_omx_buf (buffer);
+     if (pool->port->port_def.eDir == OMX_DirOutput && !omx_buf->used &&
+         !pool->deactivated) {
++#if ((!defined (OMX_TARGET_RCAR_RZV2M)) || (!defined (USE_RCAR_DRP)))
+       /* Release back to the port, can be filled again */
+       err = gst_omx_port_release_buffer (pool->port, omx_buf);
+       if (err != OMX_ErrorNone) {
+@@ -792,6 +923,7 @@
+             ("Failed to relase output buffer to component: %s (0x%08x)",
+                 gst_omx_error_to_string (err), err));
+       }
++#endif
+     } else if (pool->port->port_def.eDir == OMX_DirInput) {
+       gst_omx_port_requeue_buffer (pool->port, omx_buf);
+     }
+@@ -869,7 +1001,7 @@
+ gst_omx_buffer_pool_init (GstOMXBufferPool * pool)
+ {
+   pool->buffers = g_ptr_array_new ();
+-#ifdef USE_RCAR_DMABUF
++#if defined (USE_RCAR_DMABUF) || (defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP))
+   pool->id_array = g_array_new (FALSE, FALSE, sizeof (gint));
+ #endif
+ }
+@@ -900,3 +1032,23 @@
+ 
+   return GST_BUFFER_POOL (pool);
+ }
++
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++guint GstOmxConvertWorkBufferVirtToHard(gpointer virt)
++{
++  guint hard_addr = 0;
++  GST_OMX_WORKBUFFER_ADDR_INFO *list_info;
++
++  list_info = g_workbuffer_list_info.list_head;
++  while (list_info != NULL)
++  {
++    if (list_info->virtAddr == virt) {
++      hard_addr = list_info->hardAddr;
++      break;
++    } else {
++      list_info = (GST_OMX_WORKBUFFER_ADDR_INFO *)list_info->list_next;
++    }
++  }
++  return hard_addr;
++}
++#endif
+diff -urN a/omx/gstomxbufferpool.h b/omx/gstomxbufferpool.h
+--- a/omx/gstomxbufferpool.h	2022-04-21 10:17:15.000000000 +0900
++++ b/omx/gstomxbufferpool.h	2023-03-08 14:16:16.556077668 +0900
+@@ -97,6 +97,25 @@
+   GstVideoBufferPoolClass parent_class;
+ };
+ 
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++typedef struct {
++  GstOMXBuffer * gstomxbuf;
++  OMX_BUFFERHEADERTYPE omx_buf;
++  gpointer virtAddr;
++  guint hardAddr;
++  gint mmngr_id;
++  gpointer list_next;
++  gpointer list_prev;
++} GST_OMX_WORKBUFFER_ADDR_INFO;
++
++typedef struct {
++  GST_OMX_WORKBUFFER_ADDR_INFO *list_head;
++  GST_OMX_WORKBUFFER_ADDR_INFO *list_end;
++} GST_OMX_WORKBUFFER_LIST_INFO;
++
++guint GstOmxConvertWorkBufferVirtToHard(gpointer virt);
++#endif
++
+ GType gst_omx_buffer_pool_get_type (void);
+ 
+ GstBufferPool *gst_omx_buffer_pool_new (GstElement * element, GstOMXComponent * component, GstOMXPort * port, GstOMXBufferMode output_mode);
+diff -urN a/omx/gstomxvideodec.c b/omx/gstomxvideodec.c
+--- a/omx/gstomxvideodec.c	2023-03-17 11:40:18.000000000 +0900
++++ b/omx/gstomxvideodec.c	2023-03-16 18:15:05.120594690 +0900
+@@ -66,6 +66,19 @@
+ #define MAXDPBPICBUF_H265   6
+ #endif
+ 
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++#include <OMX_MmngrList.h>
++#include <drp_api.h>
++#include <mmngr_user_public.h>
++
++typedef struct {
++    MMNGR_ID        id;
++    size_t          size;
++    unsigned int    hard_addr;
++    void*           user_virt_addr;
++} VIDEO_BUFFRE_INFO;
++#endif
++
+ GST_DEBUG_CATEGORY_STATIC (gst_omx_video_dec_debug_category);
+ #define GST_CAT_DEFAULT gst_omx_video_dec_debug_category
+ 
+@@ -770,6 +783,83 @@
+   if (gst_video_frame_map (&frame, vinfo, outbuf, GST_MAP_WRITE)) {
+     const guint nstride = port_def->format.video.nStride;
+     const guint nslice = port_def->format.video.nSliceHeight;
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++    int32_t drp_ret = -1;
++    uint32_t mmngr_hard_addr = 0;
++    uint32_t output_mmngr_hard_addr = 0;
++    st_drp_crop_t crop_data;
++    mmngr_hard_addr = OmxrConvertWorkBufferVirtToHard(inbuf->omx_buf->pBuffer);
++    output_mmngr_hard_addr = GstOmxConvertWorkBufferVirtToHard((uint8_t*)GST_VIDEO_FRAME_PLANE_DATA (&frame, 0));
++
++    if ((0 != mmngr_hard_addr) && (GST_IS_OMX_H264_DEC (self))) {
++      if (0 != output_mmngr_hard_addr) {
++        crop_data.src_adr     = mmngr_hard_addr;
++        crop_data.dst_adr     = output_mmngr_hard_addr;
++        crop_data.src_width   = nstride;
++        crop_data.src_height  = nslice;
++        switch (GST_VIDEO_INFO_FORMAT (vinfo)) {
++          case GST_VIDEO_FORMAT_I420:
++            crop_data.src_format  = 1;
++            break;
++          case GST_VIDEO_FORMAT_NV12:
++            crop_data.src_format  = 0;
++            break;
++          default:
++            g_assert_not_reached ();
++            break;
++        }
++        crop_data.crop_left   = cinfo.crop_left;
++        crop_data.crop_right  = nstride - cinfo.crop_nWidth - cinfo.crop_left;
++        crop_data.crop_top    = cinfo.crop_top;
++        crop_data.crop_bottom = nslice - cinfo.crop_nHeight - cinfo.crop_top;
++        drp_ret = DRP_Config_init();
++        if (drp_ret == 0) {
++          drp_ret = DRP_Crop(&crop_data);
++        }
++        DRP_Config_deinit();
++      } else {
++        gint mmngr_ret = 0;
++        VIDEO_BUFFRE_INFO buf_mmngr;
++
++        buf_mmngr.size = GST_VIDEO_FRAME_SIZE(&frame);
++        ret = mmngr_alloc_in_user_ext(&buf_mmngr.id, buf_mmngr.size, &buf_mmngr.hard_addr, &buf_mmngr.user_virt_addr, MMNGR_VA_SUPPORT_CACHED, NULL);
++        if (R_MM_OK == mmngr_ret) {
++          crop_data.src_adr     = mmngr_hard_addr;
++          crop_data.dst_adr     = buf_mmngr.hard_addr;
++          crop_data.src_width   = nstride;
++          crop_data.src_height  = nslice;
++          switch (GST_VIDEO_INFO_FORMAT (vinfo)) {
++            case GST_VIDEO_FORMAT_I420:
++              crop_data.src_format  = 1;
++              break;
++            case GST_VIDEO_FORMAT_NV12:
++              crop_data.src_format  = 0;
++              break;
++            default:
++              g_assert_not_reached ();
++              break;
++          }
++          crop_data.crop_left   = cinfo.crop_left;
++          crop_data.crop_right  = nstride - cinfo.crop_nWidth - cinfo.crop_left;
++          crop_data.crop_top    = cinfo.crop_top;
++          crop_data.crop_bottom = nslice - cinfo.crop_nHeight - cinfo.crop_top;
++          drp_ret = DRP_Config_init();
++          if (drp_ret == 0) {
++            drp_ret = DRP_Crop(&crop_data);
++            if (drp_ret == 0) {
++              DRP_Config_deinit();
++              memcpy(GST_VIDEO_FRAME_PLANE_DATA (&frame, 0), buf_mmngr.user_virt_addr, buf_mmngr.size);
++            }
++          }
++          mmngr_free_in_user_ext(buf_mmngr.id);
++        }
++      }
++    
++      if (drp_ret == 0) {
++        ret = TRUE;
++      }
++    } else {
++#endif
+     guint src_stride[GST_VIDEO_MAX_PLANES] = { nstride, 0, };
+     guint src_size[GST_VIDEO_MAX_PLANES] = { nstride * nslice, 0, };
+     gint dst_width[GST_VIDEO_MAX_PLANES] = { 0, };
+@@ -861,9 +951,12 @@
+       }
+       src += src_size[p];
+     }
++    ret = TRUE;
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++    }
++#endif
+ 
+     gst_video_frame_unmap (&frame);
+-    ret = TRUE;
+   } else {
+     GST_DEBUG_OBJECT (self,
+         "Can't map output buffer to frame, try with gst_buffer_map");
+@@ -1982,6 +2075,9 @@
+       if (err != OMX_ErrorNone)
+         goto reconfigure_error;
+     } else {
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++      gboolean negotiate;
++#endif
+       /* Just update caps */
+       GST_VIDEO_DECODER_STREAM_LOCK (self);
+ 
+@@ -2020,12 +2116,35 @@
+         state->info.par_d = state->info.par_n;
+       }
+ 
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++      /* Do not negotiate if there is crop */
++      negotiate = TRUE;
++      if (GST_IS_OMX_H264_DEC (self)) {
++      if (self->enable_crop) {
++        if (!get_crop_info (self, &cinfo)) {
++          if (buf)
++            gst_omx_port_release_buffer (port, buf);
++          gst_video_codec_state_unref (state);
++          goto caps_failed;
++        }
++
++        if ((cinfo.crop_nWidth != port_def.format.video.nFrameWidth) ||
++             (cinfo.crop_nHeight != port_def.format.video.nFrameHeight)) {
++          negotiate = FALSE;
++        }
++      }
++      }
++      if (TRUE == negotiate) {
++#endif
+       if (!gst_video_decoder_negotiate (GST_VIDEO_DECODER (self))) {
+         if (buf)
+           gst_omx_port_release_buffer (port, buf);
+         gst_video_codec_state_unref (state);
+         goto caps_failed;
+       }
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++      }
++#endif
+ 
+       gst_video_codec_state_unref (state);
+ 
+@@ -2187,6 +2306,29 @@
+       frame = NULL;
+       buf = NULL;
+     } else {
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++      if (GST_IS_OMX_H264_DEC (self)) {
++      gint i, n;
++      GstBufferPool *bpool = NULL;
++      GstOMXBufferPool *pool = NULL;
++
++      n = port->buffers->len;
++      for (i = 0; i < n; i++) {
++        GstOMXBuffer *tmp = g_ptr_array_index (port->buffers, i);
++
++        if (tmp == buf)
++          break;
++      }
++      g_assert (i != n);
++
++      bpool = gst_video_decoder_get_buffer_pool (GST_VIDEO_DECODER (self));
++      pool = GST_OMX_BUFFER_POOL (bpool);
++      pool->current_buffer_index = i;
++      if (self->dec_out_port != pool->port) {
++        pool->port = self->dec_out_port;
++      }
++      }
++#endif
+       if ((flow_ret =
+               gst_video_decoder_allocate_output_frame (GST_VIDEO_DECODER
+                   (self), frame)) == GST_FLOW_OK) {
+@@ -2216,7 +2358,15 @@
+ 
+   GST_DEBUG_OBJECT (self, "Finished frame: %s", gst_flow_get_name (flow_ret));
+ 
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++  gboolean release = TRUE;
++  if ((GST_IS_OMX_H264_DEC (self)) && (TRUE ==  buf->used)) {
++    release = FALSE;
++  }
++  if ((buf) && (TRUE == release)) {
++#else
+   if (buf) {
++#endif
+     err = gst_omx_port_release_buffer (port, buf);
+     if (err != OMX_ErrorNone)
+       goto release_error;
+@@ -3894,10 +4044,19 @@
+   GstStructure *config;
+   GstOMXVideoDec *self = GST_OMX_VIDEO_DEC (bdec);
+   guint i;
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++  GstCaps *caps = NULL;
++  guint size;
++  guint min_buffers;
++  guint max_buffers;
++  GstOMXPort *port;
++#endif
+ 
+ #if defined (HAVE_GST_GL)
+   {
++#if ((!defined (OMX_TARGET_RCAR_RZV2M)) || (!defined (USE_RCAR_DRP)))
+     GstCaps *caps;
++#endif
+     gint i, n;
+     GstVideoInfo info;
+ 
+@@ -3968,6 +4127,43 @@
+     return FALSE;
+ 
+   g_assert (gst_query_get_n_allocation_pools (query) > 0);
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++  if (GST_IS_OMX_H264_DEC (self)) {
++  port = self->dec_out_port;
++
++  gst_query_parse_nth_allocation_pool (query, 0, &pool, &size, NULL, NULL);
++  g_assert (pool != NULL);
++  gst_object_unref (pool);
++
++  /* Free current gstomxbufferpool */
++  pool = gst_video_decoder_get_buffer_pool (GST_VIDEO_DECODER (self));
++  if (NULL != pool){
++    GST_BUFFER_POOL_GET_CLASS (pool)->stop(pool);
++    g_object_unref(pool);
++  }
++
++  /* Set new gstomxbufferpool */
++  pool = gst_omx_buffer_pool_new (GST_ELEMENT_CAST (self), self->dec,
++          self->dec_out_port, GST_OMX_BUFFER_MODE_SYSTEM_MEMORY);
++
++  config = gst_buffer_pool_get_config (pool);
++
++  gst_query_parse_allocation (query, &caps, NULL);
++  if (gst_query_find_allocation_meta (query, GST_VIDEO_META_API_TYPE, NULL)) {
++    gst_buffer_pool_config_add_option (config,GST_BUFFER_POOL_OPTION_VIDEO_META);
++  }
++
++  min_buffers = max_buffers = port->port_def.nBufferCountActual;
++  gst_buffer_pool_config_set_params (config, caps, size, min_buffers, max_buffers);
++  if (!gst_buffer_pool_set_config (pool, config)) {
++    GST_INFO_OBJECT (self, "Failed to set config on pool");
++    gst_object_unref (pool);
++    return FALSE;
++  }
++
++  gst_query_set_nth_allocation_pool(query, 0, pool, size, min_buffers, max_buffers);
++  } else {
++#endif
+   gst_query_parse_nth_allocation_pool (query, 0, &pool, NULL, NULL, NULL);
+   g_assert (pool != NULL);
+ 
+@@ -3977,6 +4173,9 @@
+         GST_BUFFER_POOL_OPTION_VIDEO_META);
+   }
+   gst_buffer_pool_set_config (pool, config);
++#if defined (OMX_TARGET_RCAR_RZV2M) && defined (USE_RCAR_DRP)
++  }
++#endif
+   gst_object_unref (pool);
+ 
+   return TRUE;
+diff -urN a/omx/meson.build b/omx/meson.build
+--- a/omx/meson.build	2022-04-21 10:17:15.000000000 +0900
++++ b/omx/meson.build	2023-03-07 10:31:51.052607355 +0900
+@@ -56,6 +56,9 @@
+   if have_mmngrbuf
+     optional_deps += lib_mmngrbuf
+   endif
++  optional_deps += lib_omxr_utility
++  optional_deps += lib_drp_api
++  optional_deps += lib_mmngr
+ endif
+ 
+ gstomx = library('gstomx',
+diff -urN a/omx/openmax/OMX_MmngrList.h b/omx/openmax/OMX_MmngrList.h
+--- a/omx/openmax/OMX_MmngrList.h	1970-01-01 09:00:00.000000000 +0900
++++ b/omx/openmax/OMX_MmngrList.h	2023-03-17 13:09:53.602960756 +0900
+@@ -0,0 +1,52 @@
++/*
++ * Copyright(C) 2023 Renesas Electronics Corporation. All Rights Reserved.
++ * RENESAS ELECTRONICS CONFIDENTIAL AND PROPRIETARY
++ * This program must be used solely for the purpose for which
++ * it was furnished by Renesas Electronics Corporation.
++ * No part of this program may be reproduced or disclosed to
++ * others, in any form, without the prior written permission
++ * of Renesas Electronics Corporation.
++ */
++/**
++ * OMX MMNGR List header
++ * 
++ * Header file for using MMNGR list 
++ *
++ * \file OMX_MmngrList.h
++ * 
++ */
++
++#ifndef OMX_MMNGRLIST_H
++#define OMX_MMNGRLIST_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif /* __cplusplus */
++
++
++/* Each OMX header must include all required header files to allow the
++ *  header to compile without errors.  The includes below are required
++ *  for this header file to compile successfully 
++ */
++#include <OMX_Core.h>
++
++typedef struct {
++    OMX_PTR pvBaseVirtAddr;
++    OMX_U32 u32BaseHardIpAddr;
++    OMX_PTR list_next;
++    OMX_PTR list_prev;
++} OMX_WORKBUFFER_ADDR_INFO;
++
++typedef struct {
++    OMX_PTR list_head;
++    OMX_PTR list_end;
++} OMX_WORKBUFFER_LIST_INFO;
++
++OMX_API OMX_U32 OmxrConvertWorkBufferVirtToHard(
++    OMX_PTR pvBaseVirtAddr);
++
++#ifdef __cplusplus
++}
++#endif /* __cplusplus */
++
++#endif /* OMX_MMNGRLIST_H */

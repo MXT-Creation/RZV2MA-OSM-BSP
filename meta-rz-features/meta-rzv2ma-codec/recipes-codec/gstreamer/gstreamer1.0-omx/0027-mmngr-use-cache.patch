@@ -1,0 +1,5 @@
+--- a/omx/gstomxbufferpool.c-revBASE.svn001.tmp.c
++++ b/omx/gstomxbufferpool.c
+@@ -179 +179 @@ gst_omx_memory_allocator_alloc_mmngr (GstBufferPoo
+-  ret = mmngr_alloc_in_user_ext(&list_info->mmngr_id, plane_size, &list_info->hardAddr, &list_info->virtAddr, MMNGR_VA_SUPPORT, NULL);
++  ret = mmngr_alloc_in_user_ext(&list_info->mmngr_id, plane_size, &list_info->hardAddr, &list_info->virtAddr, MMNGR_VA_SUPPORT_CACHED, NULL);

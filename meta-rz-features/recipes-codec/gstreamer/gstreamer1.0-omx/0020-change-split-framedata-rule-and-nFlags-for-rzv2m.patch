@@ -1,0 +1,397 @@
+diff -ur a/omx/gstomxvideodec.c b/omx/gstomxvideodec.c
+--- a/omx/gstomxvideodec.c	2022-11-02 21:10:30.000000000 +0900
++++ b/omx/gstomxvideodec.c	2022-11-14 11:17:10.631913037 +0900
+@@ -98,6 +98,85 @@
+ 
+ #ifdef OMX_TARGET_RCAR_RZV2M
+ static guint8 * gst_omx_video_dec_get_startcode_length (guint8 * start, guint8 * end, guint * len);
++
++static const struct h264_nal_type  h264_nals[H264_NAL_MAX] = 
++{
++    {H264_NAL_UNSPEC00, NAL_UNIT_NONE},
++    {H264_NAL_NON_IDR_SLICE, NAL_UNIT_DATA},
++    {H264_NAL_UNSPEC02, NAL_UNIT_NONE},
++    {H264_NAL_UNSPEC03, NAL_UNIT_NONE},
++    {H264_NAL_UNSPEC04, NAL_UNIT_NONE},
++    {H264_NAL_IDR_SLICE,NAL_UNIT_DATA},
++    {H264_NAL_SEI_NUT, NAL_UNIT_HEADER_PREFIX},
++    {H264_NAL_SPS_NUT, NAL_UNIT_HEADER_PREFIX},
++    {H264_NAL_PPS_NUT, NAL_UNIT_HEADER_PREFIX},
++    {H264_NAL_AUD_NUT, NAL_UNIT_AUD},
++    {H264_NAL_EOSEQ_NUT, NAL_UNIT_EOS},
++    {H264_NAL_EOS_NUT, NAL_UNIT_EOS},
++    {H264_NAL_UNSPEC12, NAL_UNIT_NONE},
++    {H264_NAL_SPS_EXT, NAL_UNIT_HEADER_PREFIX},
++    {H264_NAL_PNAL_NUT, NAL_UNIT_HEADER_PREFIX},
++    {H264_NAL_SSPS_NUT, NAL_UNIT_HEADER_PREFIX},
++    {H264_NAL_UNSPEC16, NAL_UNIT_NONE},
++    {H264_NAL_UNSPEC17, NAL_UNIT_NONE},
++    {H264_NAL_UNSPEC18, NAL_UNIT_NONE},
++    {H264_NAL_AUXILIARY_NUT, NAL_UNIT_DATA},
++    {H264_NAL_SLICE_EXT, NAL_UNIT_DATA},
++    {H264_NAL_SLICE_EXT_DVC, NAL_UNIT_DATA}
++};
++
++static const struct h265_nal_type h265_nals[H265_NAL_MAX] = 
++{
++    {H265_NAL_TRAIL_N, NAL_UNIT_DATA},
++    {H265_NAL_TRAIL_R, NAL_UNIT_DATA},
++    {H265_NAL_TSA_N, NAL_UNIT_DATA},
++    {H265_NAL_TSA_R, NAL_UNIT_DATA},
++    {H265_NAL_STSA_N, NAL_UNIT_DATA},
++    {H265_NAL_STSA_R, NAL_UNIT_DATA},
++    {H265_NAL_RADL_N, NAL_UNIT_DATA},
++    {H265_NAL_RADL_R, NAL_UNIT_DATA},
++    {H265_NAL_RASL_N, NAL_UNIT_DATA},
++    {H265_NAL_RASL_N, NAL_UNIT_DATA},
++    {H265_NAL_RSV_VCL_N10, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL_R11, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL_N12, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL_R13, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL_N14, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL_R15, NAL_UNIT_NONE},
++    {H265_NAL_BLA_W_LP, NAL_UNIT_DATA},
++    {H265_NAL_BLA_W_RADL, NAL_UNIT_DATA},
++    {H265_NAL_BLA_N_LP, NAL_UNIT_DATA},
++    {H265_NAL_IDR_W_RADL, NAL_UNIT_DATA},
++    {H265_NAL_IDR_N_LP, NAL_UNIT_DATA},
++    {H265_NAL_CRA_NUT, NAL_UNIT_DATA},
++    {H265_NAL_RSV_IRAP_VCL22, NAL_UNIT_NONE},
++    {H265_NAL_RSV_IRAP_VCL23, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL24, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL25, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL26, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL27, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL28, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL29, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL30, NAL_UNIT_NONE},
++    {H265_NAL_RSV_VCL31, NAL_UNIT_NONE},
++    {H265_NAL_VPS_NUT, NAL_UNIT_HEADER_PREFIX},
++    {H265_NAL_SPS_NUT, NAL_UNIT_HEADER_PREFIX},
++    {H265_NAL_PPS_NUT, NAL_UNIT_HEADER_PREFIX},
++    {H265_NAL_AUD_NUT, NAL_UNIT_AUD},
++    {H265_NAL_EOS_NUT, NAL_UNIT_EOS},
++    {H265_NAL_EOB_NUT, NAL_UNIT_EOS},
++    {H265_NAL_FD_NUT, NAL_UNIT_HEADER_PREFIX},
++    {H265_NAL_PREFIX_SEI_NUT, NAL_UNIT_HEADER_PREFIX},
++    {H265_NAL_SUFFIX_SEI_NUT, NAL_UNIT_HEADER_SUFFIX},
++    {H265_NAL_RSV_NVCL41, NAL_UNIT_NONE},
++    {H265_NAL_RSV_NVCL42, NAL_UNIT_NONE},
++    {H265_NAL_RSV_NVCL43, NAL_UNIT_NONE},
++    {H265_NAL_RSV_NVCL44, NAL_UNIT_NONE},
++    {H265_NAL_RSV_NVCL45, NAL_UNIT_NONE},
++    {H265_NAL_RSV_NVCL46, NAL_UNIT_NONE},
++    {H265_NAL_RSV_NVCL47, NAL_UNIT_NONE}
++};
++
+ #endif
+ 
+ enum
+@@ -3417,21 +3496,13 @@
+         data_end = &map.data[offset + buf->omx_buf->nFilledLen];
+ 
+         if (GST_IS_OMX_H264_DEC (self)) {
+-          #define NAL_UNIT_MASK    (0x1F)
+-          #define NAL_UNIT_SEI     (6)
+-          #define NAL_UNIT_SPS     (7)
+-          #define NAL_UNIT_PPS     (8)
+-          #define NAL_UNIT_AUD     (9)
+-          #define NAL_UNIT_EOSEQ   (10)
+-          #define NAL_UNIT_EOS     (11)
+-
+           /* remove AUD */
+           startcode = gst_omx_video_dec_get_startcode_length(&map.data[offset], data_end, &startcode_len);
+-          while ((startcode == &map.data[offset]) && (offset + startcode_len + 1 <= buf->omx_buf->nFilledLen)) {
++          while ((startcode == &map.data[offset]) && (startcode + startcode_len + 1 <= data_end)) {
+             next_nal = &map.data[offset + startcode_len];
+-            next_nal_unit_type = *next_nal & NAL_UNIT_MASK;
++            next_nal_unit_type = *next_nal & H264_NAL_UNIT_MASK;
+ 
+-            if (next_nal_unit_type == NAL_UNIT_AUD) {
++            if ((next_nal_unit_type < H264_NAL_MAX) && (h264_nals[next_nal_unit_type].group == NAL_UNIT_AUD)) {
+               GST_LOG_OBJECT (self,
+                 "Remove AUD data, offset=%u startcode_len=%u",
+                 offset, startcode_len);
+@@ -3451,16 +3522,20 @@
+           }
+ 
+           startcode = gst_omx_video_dec_get_startcode_length(&map.data[offset], data_end, &startcode_len);
+-          if ((startcode == &map.data[offset]) && (offset + startcode_len + 1  <= buf->omx_buf->nFilledLen)) {
++          if ((startcode == &map.data[offset]) && (startcode + startcode_len + 1  <= data_end)) {
+             next_nal = &map.data[offset + startcode_len];
+-            next_nal_unit_type = *next_nal & NAL_UNIT_MASK;
++            next_nal_unit_type = *next_nal & H264_NAL_UNIT_MASK;
+ 
+-            if ((next_nal_unit_type == NAL_UNIT_SPS) || (next_nal_unit_type == NAL_UNIT_PPS) || (next_nal_unit_type == NAL_UNIT_SEI)) {
+-              found_decode_info = 1;
+-              buf->omx_buf->nFlags |= OMX_BUFFERFLAG_CODECCONFIG;
+-            } else if ((next_nal_unit_type == NAL_UNIT_EOSEQ) || (next_nal_unit_type == NAL_UNIT_EOS)) {
+-              found_eos_header = 1;
+-              buf->omx_buf->nFlags |= OMX_BUFFERFLAG_CODECCONFIG | OMX_BUFFERFLAG_EOS;
++            if (next_nal_unit_type < H264_NAL_MAX) {
++              if (h264_nals[next_nal_unit_type].group == NAL_UNIT_HEADER_PREFIX) {
++                found_decode_info = 1;
++                buf->omx_buf->nFlags = OMX_BUFFERFLAG_CODECCONFIG;
++              } else if (h264_nals[next_nal_unit_type].group == NAL_UNIT_EOS) {
++                found_eos_header = 1;
++                buf->omx_buf->nFlags = OMX_BUFFERFLAG_CODECCONFIG | OMX_BUFFERFLAG_EOS;
++              } else {
++                buf->omx_buf->nFlags = OMX_BUFFERFLAG_ENDOFFRAME | OMX_BUFFERFLAG_SYNCFRAME;
++              }
+             }
+ 
+             while (NULL != startcode) {
+@@ -3468,41 +3543,33 @@
+ 
+               if (NULL != startcode) {
+                 next_nal = startcode + startcode_len;
+-                next_nal_unit_type = *next_nal & NAL_UNIT_MASK;
++                next_nal_unit_type = *next_nal & H264_NAL_UNIT_MASK;
+ 
+-                /* If the frame data starts with SPS/PPS/SEI, split at the next NAL that is not SPS/PPS/EOSEQ/EOS/SEI.
+-                 * If the frame data doesn't start with SPS/PPS/SEI, split at the next SPS/PPS/SEI NAL.
+-                 * If find the frame data with EOSEQ/EOS, split at the next NAL.
+-                 */
+-                if ((found_decode_info && (next_nal_unit_type != NAL_UNIT_SPS) && (next_nal_unit_type != NAL_UNIT_PPS) && 
+-                      (next_nal_unit_type != NAL_UNIT_EOSEQ) && (next_nal_unit_type != NAL_UNIT_EOS) && (next_nal_unit_type != NAL_UNIT_SEI))
+-                  || (!found_decode_info && ((next_nal_unit_type == NAL_UNIT_SPS) || (next_nal_unit_type == NAL_UNIT_PPS) || (next_nal_unit_type == NAL_UNIT_SEI)))
+-                  || (found_eos_header)) {
+-                  frame_split_offset = startcode - &map.data[offset];
+-                  break;
+-                } else if ((next_nal_unit_type == NAL_UNIT_EOSEQ) || (next_nal_unit_type == NAL_UNIT_EOS)) {
+-                  found_eos_header = 1;
++                if (next_nal_unit_type < H264_NAL_MAX) {
++                  /* If the frame data starts with nal unit group HEADER_PREFIX/EOS/, split at the next NAL that is not HEADER_PREFIX/EOS.
++                   * If the frame data doesn't start with nal unit group HEADER_PREFIX, split at the next HEADER_PREFIX.
++                   * If find the frame data with EOSEQ/EOS, split at the next NAL.
++                   */
++                  if ((found_decode_info && (h264_nals[next_nal_unit_type].group != NAL_UNIT_HEADER_PREFIX) && (h264_nals[next_nal_unit_type].group != NAL_UNIT_EOS))
++                    || (!found_decode_info && (h264_nals[next_nal_unit_type].group == NAL_UNIT_HEADER_PREFIX))
++                    || (found_eos_header)) {
++                    frame_split_offset = startcode - &map.data[offset];
++                    break;
++                  } else if (h264_nals[next_nal_unit_type].group == NAL_UNIT_EOS) {
++                    found_eos_header = 1;
++                  }
+                 }
+               }
+             }
+           }
+         } else if (GST_IS_OMX_H265_DEC (self)) {
+-          #define NAL_UNIT_MASK  (0x7E)
+-          #define NAL_UNIT_VPS   (32)
+-          #define NAL_UNIT_SPS   (33)
+-          #define NAL_UNIT_PPS   (34)
+-          #define NAL_UNIT_AUD   (35)
+-          #define NAL_UNIT_EOS   (36)
+-          #define NAL_UNIT_EOB   (37)
+-          #define NAL_UNIT_PREFIX_SEI (39)
+-
+           /* remove AUD */
+           startcode = gst_omx_video_dec_get_startcode_length(&map.data[offset], data_end, &startcode_len);
+-          while ((startcode == &map.data[offset]) && (offset + startcode_len + 1 <= buf->omx_buf->nFilledLen)) {
++          while ((startcode == &map.data[offset]) && (startcode + startcode_len + 1 <= data_end)) {
+             next_nal = &map.data[offset + startcode_len];
+-            next_nal_unit_type = (*next_nal & NAL_UNIT_MASK) >> 1;
++            next_nal_unit_type = (*next_nal & H265_NAL_UNIT_MASK) >> 1;
+ 
+-            if (next_nal_unit_type == NAL_UNIT_AUD) {
++            if ((next_nal_unit_type < H265_NAL_MAX) && (h265_nals[next_nal_unit_type].group == NAL_UNIT_AUD)) {
+               GST_LOG_OBJECT (self,
+                 "Remove AUD data, offset=%u startcode_len=%u",
+                 offset, startcode_len);
+@@ -3522,16 +3589,23 @@
+           }
+ 
+           startcode = gst_omx_video_dec_get_startcode_length(&map.data[offset], data_end, &startcode_len);
+-          if ((startcode == &map.data[offset]) && (offset + startcode_len + 1 <= buf->omx_buf->nFilledLen)) {
++          if ((startcode == &map.data[offset]) && (startcode + startcode_len + 1 <= data_end)) {
+             next_nal = &map.data[offset + startcode_len];
+-            next_nal_unit_type = (*next_nal & NAL_UNIT_MASK) >> 1;
++            next_nal_unit_type = (*next_nal & H265_NAL_UNIT_MASK) >> 1;
+ 
+-            if ((next_nal_unit_type == NAL_UNIT_VPS) || (next_nal_unit_type == NAL_UNIT_SPS) || (next_nal_unit_type == NAL_UNIT_PPS) || (next_nal_unit_type == NAL_UNIT_PREFIX_SEI)) {
+-              found_decode_info = 1;
+-              buf->omx_buf->nFlags |= OMX_BUFFERFLAG_CODECCONFIG;
+-            } else if ((next_nal_unit_type == NAL_UNIT_EOS) || (next_nal_unit_type == NAL_UNIT_EOB)) {
+-              found_eos_header = 1;
+-              buf->omx_buf->nFlags |= OMX_BUFFERFLAG_CODECCONFIG | OMX_BUFFERFLAG_EOS;
++            if (next_nal_unit_type < H265_NAL_MAX) {
++              if (h265_nals[next_nal_unit_type].group == NAL_UNIT_HEADER_PREFIX){
++                found_decode_info = 1;
++                buf->omx_buf->nFlags = OMX_BUFFERFLAG_CODECCONFIG;
++              } else if (h265_nals[next_nal_unit_type].group == NAL_UNIT_HEADER_SUFFIX) {
++                found_decode_info = 1;
++                buf->omx_buf->nFlags = OMX_BUFFERFLAG_ENDOFFRAME | OMX_BUFFERFLAG_SYNCFRAME;
++              } else if (h265_nals[next_nal_unit_type].group == NAL_UNIT_EOS) {
++                found_eos_header = 1;
++                buf->omx_buf->nFlags = OMX_BUFFERFLAG_CODECCONFIG | OMX_BUFFERFLAG_EOS;
++              } else {
++                buf->omx_buf->nFlags = OMX_BUFFERFLAG_ENDOFFRAME | OMX_BUFFERFLAG_SYNCFRAME;
++              }
+             }
+ 
+             while (NULL != startcode) {
+@@ -3539,21 +3613,23 @@
+ 
+               if (NULL != startcode) {
+                 next_nal = startcode + startcode_len;
+-                next_nal_unit_type = (*next_nal & NAL_UNIT_MASK) >> 1;
++                next_nal_unit_type = (*next_nal & H265_NAL_UNIT_MASK) >> 1;
+ 
+-                /* If the frame data starts with VPS/SPS/PPS/PREFIX_SEI, split at the next NAL that is not VPS/SPS/PPS/EOS/EOB/PREFIX_SEI.
+-                 * If the frame data doesn't start with VPS/SPS/PPS/EOS/EOB/PREFIX_SEI, split at the next VPS/SPS/PPS/EOS/EOB/PREFIX_SEI NAL.
+-                 * If find the frame data with EOSEQ/EOS, split at the next NAL.
+-                 */
+-                if ((found_decode_info && (next_nal_unit_type != NAL_UNIT_VPS) && (next_nal_unit_type != NAL_UNIT_SPS) && (next_nal_unit_type != NAL_UNIT_PPS) &&
+-                      (next_nal_unit_type != NAL_UNIT_EOS) && (next_nal_unit_type != NAL_UNIT_EOB) && (next_nal_unit_type != NAL_UNIT_PREFIX_SEI))
+-                  || (!found_decode_info && ((next_nal_unit_type == NAL_UNIT_VPS) || (next_nal_unit_type == NAL_UNIT_SPS) || (next_nal_unit_type == NAL_UNIT_PPS) ||
+-                      (next_nal_unit_type == NAL_UNIT_EOS) || (next_nal_unit_type == NAL_UNIT_EOB) || (next_nal_unit_type == NAL_UNIT_PREFIX_SEI)))
+-                  || (found_eos_header)) {
+-                  frame_split_offset = startcode - &map.data[offset];
+-                  break;
+-                } else if ((next_nal_unit_type == NAL_UNIT_EOS) || (next_nal_unit_type == NAL_UNIT_EOB)) {
+-                  found_eos_header = 1;
++                if (next_nal_unit_type < H265_NAL_MAX) {
++                  /* If the frame data starts with nal unit HEADER_PREFIX/HEADER_SUFFIX, split at the next NAL that is not HEADER_PREFIX/HEADER_SUFFIX/EOS.
++                   * If the frame data doesn't start with HEADER_PREFIX/HEADER_SUFFIX/EOS, split at the next HEADER_PREFIX/HEADER_SUFFIX/EOS.
++                   * If find the frame data with EOSEQ/EOS, split at the next NAL.
++                   */
++                  if ((found_decode_info && (h265_nals[next_nal_unit_type].group != NAL_UNIT_HEADER_PREFIX) && 
++                        (h265_nals[next_nal_unit_type].group != NAL_UNIT_HEADER_SUFFIX) && (h265_nals[next_nal_unit_type].group != NAL_UNIT_EOS))
++                    || (!found_decode_info && ((h265_nals[next_nal_unit_type].group == NAL_UNIT_HEADER_PREFIX) || 
++                        (h265_nals[next_nal_unit_type].group == NAL_UNIT_HEADER_SUFFIX) || (h265_nals[next_nal_unit_type].group == NAL_UNIT_EOS)))
++                    || (found_eos_header)) {
++                    frame_split_offset = startcode - &map.data[offset];
++                    break;
++                  } else if (h265_nals[next_nal_unit_type].group == NAL_UNIT_EOS) {
++                    found_eos_header = 1;
++                  }
+                 }
+               }
+             }
+@@ -3564,7 +3640,6 @@
+         if (frame_split_offset > 0) {
+             /* Split frame data */
+             buf->omx_buf->nFilledLen = frame_split_offset;
+-            buf->omx_buf->nFlags |= OMX_BUFFERFLAG_CODECCONFIG;
+         }
+ 
+         gst_buffer_extract (frame->input_buffer, offset,
+diff -ur a/omx/gstomxvideodec.h b/omx/gstomxvideodec.h
+--- a/omx/gstomxvideodec.h	2022-11-02 14:37:14.000000000 +0900
++++ b/omx/gstomxvideodec.h	2022-11-14 11:09:18.603922669 +0900
+@@ -51,6 +51,113 @@
+ #define GST_IS_OMX_VIDEO_DEC_CLASS(obj) \
+   (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_OMX_VIDEO_DEC))
+ 
++#ifdef OMX_TARGET_RCAR_RZV2M
++#define H264_NAL_UNIT_MASK  (0x1F)
++#define H265_NAL_UNIT_MASK  (0x7E)
++
++typedef enum
++{
++  H264_NAL_UNSPEC00 = 0,
++  H264_NAL_NON_IDR_SLICE = 1,
++  H264_NAL_UNSPEC02 = 2,
++  H264_NAL_UNSPEC03 = 3,
++  H264_NAL_UNSPEC04 = 4,
++  H264_NAL_IDR_SLICE = 5,
++  H264_NAL_SEI_NUT = 6,
++  H264_NAL_SPS_NUT = 7,
++  H264_NAL_PPS_NUT = 8,
++  H264_NAL_AUD_NUT = 9,
++  H264_NAL_EOSEQ_NUT = 10,
++  H264_NAL_EOS_NUT = 11,
++  H264_NAL_UNSPEC12 = 12,
++  H264_NAL_SPS_EXT = 13,
++  H264_NAL_PNAL_NUT = 14,
++  H264_NAL_SSPS_NUT = 15,
++  H264_NAL_UNSPEC16 = 16,
++  H264_NAL_UNSPEC17 = 17,
++  H264_NAL_UNSPEC18 = 18,
++  H264_NAL_AUXILIARY_NUT = 19,
++  H264_NAL_SLICE_EXT = 20,
++  H264_NAL_SLICE_EXT_DVC = 21,
++  H264_NAL_MAX
++} H264_NAL_UNIT;
++
++typedef enum 
++{
++  H265_NAL_TRAIL_N = 0,
++  H265_NAL_TRAIL_R = 1,
++  H265_NAL_TSA_N = 2,
++  H265_NAL_TSA_R = 3,
++  H265_NAL_STSA_N = 4,
++  H265_NAL_STSA_R = 5,
++  H265_NAL_RADL_N = 6,
++  H265_NAL_RADL_R = 7,
++  H265_NAL_RASL_N = 8,
++  H265_NAL_RASL_R = 9,
++  H265_NAL_RSV_VCL_N10 = 10,
++  H265_NAL_RSV_VCL_R11 = 11,
++  H265_NAL_RSV_VCL_N12 = 12,
++  H265_NAL_RSV_VCL_R13 = 13,
++  H265_NAL_RSV_VCL_N14 = 14,
++  H265_NAL_RSV_VCL_R15 = 15,
++  H265_NAL_BLA_W_LP = 16,
++  H265_NAL_BLA_W_RADL = 17,
++  H265_NAL_BLA_N_LP = 18,
++  H265_NAL_IDR_W_RADL = 19,
++  H265_NAL_IDR_N_LP = 20,
++  H265_NAL_CRA_NUT = 21,
++  H265_NAL_RSV_IRAP_VCL22 = 22,
++  H265_NAL_RSV_IRAP_VCL23 = 23,
++  H265_NAL_RSV_VCL24 = 24,
++  H265_NAL_RSV_VCL25 = 25,
++  H265_NAL_RSV_VCL26 = 26,
++  H265_NAL_RSV_VCL27 = 27,
++  H265_NAL_RSV_VCL28 = 28,
++  H265_NAL_RSV_VCL29 = 29,
++  H265_NAL_RSV_VCL30 = 30,
++  H265_NAL_RSV_VCL31 = 31,
++  H265_NAL_VPS_NUT = 32,
++  H265_NAL_SPS_NUT = 33,
++  H265_NAL_PPS_NUT = 34,
++  H265_NAL_AUD_NUT = 35,
++  H265_NAL_EOS_NUT = 36,
++  H265_NAL_EOB_NUT = 37,
++  H265_NAL_FD_NUT = 38,
++  H265_NAL_PREFIX_SEI_NUT = 39,
++  H265_NAL_SUFFIX_SEI_NUT = 40,
++  H265_NAL_RSV_NVCL41 = 41,
++  H265_NAL_RSV_NVCL42 = 42,
++  H265_NAL_RSV_NVCL43 = 43,
++  H265_NAL_RSV_NVCL44 = 44,
++  H265_NAL_RSV_NVCL45 = 45,
++  H265_NAL_RSV_NVCL46 = 46,
++  H265_NAL_RSV_NVCL47 = 47,
++  H265_NAL_MAX
++} H265_NAL_UNIT;
++
++typedef enum
++{
++  NAL_UNIT_HEADER_PREFIX = 0,
++  NAL_UNIT_HEADER_SUFFIX,
++  NAL_UNIT_AUD,
++  NAL_UNIT_EOS,
++  NAL_UNIT_DATA,
++  NAL_UNIT_NONE
++} NAL_UNIT_GROUP;
++
++struct h264_nal_type
++{
++  H264_NAL_UNIT nal;
++  NAL_UNIT_GROUP group;
++};
++
++struct h265_nal_type
++{
++  H265_NAL_UNIT nal;
++  NAL_UNIT_GROUP group;
++};
++#endif
++
+ typedef struct _GstOMXVideoDec GstOMXVideoDec;
+ typedef struct _GstOMXVideoDecClass GstOMXVideoDecClass;
+ typedef struct _crop_info crop_info;

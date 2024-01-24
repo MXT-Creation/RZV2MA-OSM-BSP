@@ -1,0 +1,32 @@
+diff -git a/mmngr_drv/mmngr/mmngr-module/files/mmngr/drv/mmngr_drv.c b/mmngr_drv/mmngr/mmngr-module/files/mmngr/drv/mmngr_drv.c
+--- a/mmngr_drv/mmngr/mmngr-module/files/mmngr/drv/mmngr_drv.c
++++ b/mmngr_drv/mmngr/mmngr-module/files/mmngr/drv/mmngr_drv.c
+@@ -1177,8 +1177,8 @@
+ #ifndef IPMMU_MMU_SUPPORT
+ 	if ((mm_kernel_reserve_addr + mm_kernel_reserve_size) > 
+ 	    (legacy_memory_addr + legacy_memory_size)) {
+-		pr_warn("The kernel reserved area (0x%09lx - 0x%09lx) is out of "\
+-			"the legacy area of memory (0x%09lx - 0x%09lx) \n",
++		pr_warn("The kernel reserved area (0x%09llx - 0x%09llx) is out of "\
++			"the legacy area of memory (0x%09llx - 0x%09llx) \n",
+ 			mm_kernel_reserve_addr,
+ 			mm_kernel_reserve_addr + mm_kernel_reserve_size,
+ 			legacy_memory_addr,
+@@ -1271,7 +1271,7 @@
+ 
+ 	for_each_child_of_node(np, node) {
+ 		if(of_property_match_string(node, "device_type", "memory") >= 0){
+-			__be32 *regaddr_p = NULL;
++			const __be32 *regaddr_p = NULL;
+ 			regaddr_p = of_get_address(node, 0, &memory_size, NULL);
+ 			if (regaddr_p)
+ 				memory_addr = of_translate_address(node, regaddr_p);
+@@ -1290,6 +1290,7 @@
+ static const struct soc_device_attribute rzg2l_match[] = {
+ 	{ .family = "RZ/G2L" },
+ 	{ .family = "RZ/G2UL" },
+	{ .family = "RZ/V2L" },
++	{ .family = "RZ/V2MA" },
+ 	{ /* sentinel*/ }
+ };
+ 

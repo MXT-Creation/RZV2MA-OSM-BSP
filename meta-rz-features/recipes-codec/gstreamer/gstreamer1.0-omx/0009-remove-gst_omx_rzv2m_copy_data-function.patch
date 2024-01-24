@@ -1,0 +1,254 @@
+diff -ur a/omx/gstomxvideodec.c b/omx/gstomxvideodec.c
+--- a/omx/gstomxvideodec.c	2022-04-21 10:17:15.000000000 +0900
++++ b/omx/gstomxvideodec.c	2022-09-05 20:28:45.644603300 +0900
+@@ -96,10 +96,6 @@
+ 
+ static gboolean get_crop_info (GstOMXVideoDec * self, crop_info * c_info);
+ 
+-#ifdef OMX_TARGET_RCAR_RZV2M
+-static void gst_omx_rzv2m_copy_data(GstOMXVideoDec *self, GstVideoInfo *vinfo, GstVideoFrame frame, crop_info cinfo, const guint8 *src);
+-#endif
+-
+ enum
+ {
+   PROP_0,
+@@ -634,188 +630,6 @@
+   return ret;
+ }
+ 
+-#ifdef OMX_TARGET_RCAR_RZV2M
+-#define U32_MAX (0xFFFFFFFF)
+-#define LOG2_16 (4)
+-#define LOG2_64 (6)
+-#define LOG2_4  (2)
+-static void gst_omx_rzv2m_copy_data(GstOMXVideoDec *self, GstVideoInfo *vinfo, GstVideoFrame frame, crop_info cinfo, const guint8 *src)
+-{
+-  int log2th = 7;
+-  int log2tv = 5;
+-
+-  int x = 0;
+-  int y = 0;
+-  int x_in_tile = 0;
+-  int y_in_tile = 0;
+-  char *p_dst0 = NULL;
+-  char *p_dst1 = NULL;
+-  int tile_offset = 0;
+-  int unit64x16_offset = 0;
+-  int unit16x4_offset = 0;
+-  int offset_c = 0;
+-  int mask_x_in_tile = 0;
+-  int mask_y_in_tile = 0;
+-  int mask_x_in_64x16 = 0x3F;
+-  int mask_y_in_64x16 = 0x0F;
+-  int mask_x_in_16x4 = 0x0F;
+-  int mask_y_in_16x4 = 0x03;
+-  int x_left = 0;
+-  int x_right = 0;
+-  int x_end = 0;
+-  int y_top = 0;
+-  int y_bot = 0;
+-  int y_end = 0;
+-  int log2stride = -1;
+-  int stride = 0;
+-  int tmp_stride = 0;
+-  int width = 0;
+-  int height = 0;
+-
+-  if (!vinfo) {
+-    return;
+-  }
+-
+-  width = GST_VIDEO_INFO_WIDTH (vinfo);
+-  height = GST_VIDEO_INFO_HEIGHT (vinfo);
+-
+-  if (width <= 0) {
+-    GST_ERROR_OBJECT (self, "width size is invalid: %d\n", width);
+-    return;
+-  }
+-
+-  /* calc stride */
+-  gst_omx_video_calc_power(2, width, &stride);
+-
+-  /* calc log2(stride) */
+-  tmp_stride = stride;
+-  while (tmp_stride != 0) {
+-    log2stride++;
+-    tmp_stride /= 2;
+-  }
+-
+-  mask_x_in_tile = ~(U32_MAX << log2th);   /* mask for x in tile */
+-  mask_y_in_tile = ~(U32_MAX << log2tv);   /* mask for y in tile */
+-
+-  /* crop info */
+-  y_top = cinfo.crop_top;
+-  x_left = cinfo.crop_left;
+-
+-  /** Luma **/
+-  y_bot = height;
+-  y_end = GST_ROUND_UP_32 (y_bot);
+-  x_right = width;
+-  x_end = GST_ROUND_UP_128 (x_right);
+-
+-  if (GST_VIDEO_INFO_IS_INTERLACED (vinfo)) {
+-    y_top += 4;
+-    y_bot += 4;
+-  }
+-
+-  p_dst0 = GST_VIDEO_FRAME_PLANE_DATA (&frame, 0);
+-  for (y = y_top; y < y_bot; y++) {
+-    for (x = x_left; x < x_right; x++) {
+-      tile_offset = (((y >> log2tv) << log2tv) << log2stride) + (((x >> log2th) << log2th) << log2tv);
+-      x_in_tile = x & mask_x_in_tile;
+-      y_in_tile = y & mask_y_in_tile;
+-      unit64x16_offset = (((y_in_tile >> LOG2_16) << LOG2_16) << log2th) + (((x_in_tile
+-                         >> LOG2_64) << LOG2_64) << LOG2_16);
+-      unit16x4_offset = ((((y & mask_y_in_64x16) >> LOG2_4) << LOG2_4) << LOG2_64)
+-                        + ((((x & mask_x_in_64x16) >> LOG2_16) << LOG2_16) << LOG2_4);
+-      *p_dst0++ = *(src + tile_offset + unit64x16_offset + unit16x4_offset + (y & mask_y_in_16x4)
+-                    * 16 + (x & mask_x_in_16x4));
+-    }
+-
+-#if 0
+-    for (; x < x_end; x++) {
+-      *p_dst0++ = 0;
+-    }
+-#endif
+-  }
+-
+-#if 0
+-  for (; y < y_end; y++) {
+-    for (x = x_left; x < x_end; x++) {
+-      *p_dst0++ = 0;
+-    }
+-  }
+-#endif
+-
+-  /** Chroma **/
+-  switch (GST_VIDEO_INFO_N_PLANES (vinfo)) {
+-    case 2: // NV12
+-      p_dst0 = GST_VIDEO_FRAME_PLANE_DATA (&frame, 1);
+-      p_dst1 = NULL;
+-      break;
+-    case 3: // I420
+-      p_dst0 = GST_VIDEO_FRAME_PLANE_DATA (&frame, 1);
+-      p_dst1 = GST_VIDEO_FRAME_PLANE_DATA (&frame, 2);
+-      break;
+-    default:
+-      // not support
+-      return;
+-  }
+-
+-  /* update x and y position info */
+-  y_bot = (height + 1) / 2;
+-  y_end = GST_ROUND_UP_32 (y_bot);
+-  x_right = GST_ROUND_UP_2 (width);
+-  x_end = GST_ROUND_UP_128 (x_right);
+-
+-  if (GST_VIDEO_INFO_IS_INTERLACED (vinfo)) {
+-    y_top += 4;
+-    y_bot += 4;
+-  }
+-
+-  /* update src position */
+-  src = src + (stride * GST_ROUND_UP_32(height));
+-
+-  for (y = y_top; y < y_bot; y++) {
+-    for (x = x_left; x < x_right; x += 2) {
+-      tile_offset = (((y >> log2tv) << log2tv) << log2stride) + (((x >> log2th) << log2th) << log2tv);
+-      x_in_tile = x & mask_x_in_tile;
+-      y_in_tile = y & mask_y_in_tile;
+-      unit64x16_offset = (((y_in_tile >> LOG2_16) << LOG2_16) << log2th) + (((x_in_tile
+-                         >> LOG2_64) << LOG2_64) << LOG2_16);
+-      unit16x4_offset = ((((y & mask_y_in_64x16) >> LOG2_4) << LOG2_4) << LOG2_64)
+-                        + ((((x & mask_x_in_64x16) >> LOG2_16) << LOG2_16) << LOG2_4);
+-      offset_c = tile_offset + unit64x16_offset + unit16x4_offset + (y & mask_y_in_16x4) * 16
+-                 + (x & mask_x_in_16x4);
+-      *p_dst0++ = *(src + offset_c);
+-      if (p_dst1) { // I420
+-        *p_dst1++ = *(src + offset_c + 1);
+-      } else { // NV12
+-        *p_dst0++ = *(src + offset_c + 1);
+-      }
+-    }
+-
+-#if 0
+-    for (; x < x_end; x += 2) {
+-      *p_dst0++ = 0;
+-      if (p_dst1) { // I420
+-        *p_dst1++ = 0;
+-      } else { // NV12
+-        *p_dst0++ = 0;
+-      }
+-    }
+-#endif
+-  }
+-
+-#if 0
+-  for (; y < y_end; y++) {
+-    for (x = x_left; x < x_end; x += 2) {
+-        *p_dst0++ = 0;
+-      if (p_dst1) { // I420
+-        *p_dst1++ = 0;
+-      } else { // NV12
+-        *p_dst0++ = 0;
+-      }
+-    }
+-  }
+-#endif
+-}
+-#endif /* OMX_TARGET_RCAR_RZV2M */
+-
+ static gboolean
+ gst_omx_video_dec_fill_buffer (GstOMXVideoDec * self,
+     GstOMXBuffer * inbuf, GstBuffer * outbuf)
+@@ -828,6 +642,20 @@
+   GstVideoFrame frame;
+   crop_info cinfo = { 0, };
+ 
++#ifdef OMX_TARGET_RCAR_RZV2M
++  if (!get_crop_info (self, &cinfo))
++    goto done;
++
++  if (vinfo->width != port_def->format.video.nFrameWidth ||
++      vinfo->height != port_def->format.video.nFrameHeight) {
++    GST_ERROR_OBJECT (self, "Resolution do not match: port=%ux%u vinfo =%dx%d,"
++        "crop left=%d, crop top=%d",
++        (guint) port_def->format.video.nFrameWidth,
++        (guint) port_def->format.video.nFrameHeight,
++        vinfo->width, vinfo->height, cinfo.crop_left, cinfo.crop_top);
++    goto done;
++  }
++#else
+   if (self->enable_crop) {
+     if (!get_crop_info (self, &cinfo))
+       goto done;
+@@ -842,6 +670,7 @@
+         vinfo->width, vinfo->height, cinfo.crop_left, cinfo.crop_top);
+     goto done;
+   }
++#endif
+ 
+   /* Try using gst_video_frame_map() before use gst_buffer_map() because
+    * gst_buffer_map() could return the different pointer in buffers
+@@ -924,12 +753,6 @@
+     }
+ 
+     src = inbuf->omx_buf->pBuffer + inbuf->omx_buf->nOffset;
+-#ifdef OMX_TARGET_RCAR_RZV2M
+-    /* RZV2M supports only I420 or NV12 formats */
+-    if (GST_VIDEO_INFO_FORMAT (vinfo) == GST_VIDEO_FORMAT_I420 || GST_VIDEO_INFO_FORMAT (vinfo) == GST_VIDEO_FORMAT_NV12) {
+-      gst_omx_rzv2m_copy_data (self, vinfo, frame, cinfo, src);
+-    } else
+-#endif /* OMX_TARGET_RCAR_RZV2M */
+     for (p = 0; p < GST_VIDEO_INFO_N_PLANES (vinfo); p++) {
+       const guint8 *data;
+       guint8 *dst;
+@@ -3162,7 +2985,7 @@
+       out_port_def.format.video.nFrameHeight = info->height;
+       out_port_def.format.video.nStride = info->width;
+       gst_omx_video_calc_power(2, info->width, &(out_port_def.format.video.nStride));        // align power of 2
+-      out_port_def.format.video.nSliceHeight = GST_ROUND_UP_32 (info->height); // align 32
++      out_port_def.format.video.nSliceHeight = GST_ROUND_UP_32 (info->height / 2) * 2; // align 32
+ 
+       out_port_def.nBufferSize = (out_port_def.format.video.nStride * out_port_def.format.video.nSliceHeight * 3) / 2;
+ 

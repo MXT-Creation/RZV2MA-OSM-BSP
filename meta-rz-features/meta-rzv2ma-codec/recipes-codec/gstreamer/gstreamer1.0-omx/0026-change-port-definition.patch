@@ -1,0 +1,14 @@
+diff --git a/omx/gstomxvideodec.c b/omx/gstomxvideodec.c
+--- a/omx/gstomxvideodec.c
++++ b/omx/gstomxvideodec.c
+@@ -3209,6 +3209,10 @@ gst_omx_video_dec_set_format (GstVideoDecoder * decoder,
+       out_port_def.format.video.nStride = 192;
+       out_port_def.format.video.nSliceHeight = 192;
+     } else {
++#ifdef OMX_TARGET_RCAR_RZV2M
++      out_port_def.format.video.nFrameWidth = 128;
++      out_port_def.format.video.nFrameHeight = 128;
++#endif
+       out_port_def.format.video.nStride = 128;
+       out_port_def.format.video.nSliceHeight = 128;
+     }

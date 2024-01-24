@@ -1,0 +1,1584 @@
+diff --git a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts
+index 488a3a5..181f3e9 100644
+--- a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts
++++ b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts
+@@ -70,7 +70,12 @@
+         
+         open_cv: open_cv {
+             reusable;
+-            reg = <0x0 0x78000000 0x0 0x8000000>;
++            reg = <0x0 0x78000000 0x0 0x7D00000>;
++        };
++
++        codec: codec {
++            reusable;
++            reg = <0x0 0x7FD00000 0x0 0x300000>;
+         };
+ 
+     };
+@@ -564,3 +569,9 @@
+     linux-memory-region = < &{/memory@00000000} >; 
+     status = "okay";
+ };
++
++&drpb0 {
++    memory-region = <&codec>;
++    linux-memory-region = < &{/memory@00000000} >; 
++    status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg.dtsi b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg.dtsi
+index e132dfe..3242793 100644
+--- a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg.dtsi
++++ b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg.dtsi
+@@ -1117,6 +1117,16 @@
+             status = "disabled";
+         };
+ 
++        drpb0: drpb0@b4000000 {
++            compatible = "renesas,rzv2ma-drpb";
++            reg = <0 0xb4000000 0 0x1000000>;
++            interrupts = <GIC_SPI 186 IRQ_TYPE_LEVEL_HIGH>,
++                         <GIC_SPI 187 IRQ_TYPE_LEVEL_HIGH>;
++            sysctrl = <&sysc>;
++            resets = <&cpg 1000>;
++            status = "disabled";
++        };
++
+         tsu: thermal@a3f50000 {
+             compatible = "renesas,rzv2ma-thermal";
+             reg = <0 0xa3f50000 0 0x80>, <0 0xa3f60000 0 0x80>;
+diff --git a/drivers/Makefile b/drivers/Makefile
+index f6cdff4..e2e3824 100644
+--- a/drivers/Makefile
++++ b/drivers/Makefile
+@@ -191,3 +191,4 @@ obj-$(CONFIG_INTERCONNECT)	+= interconnect/
+ obj-$(CONFIG_COUNTER)		+= counter/
+ obj-$(CONFIG_MOST)		+= most/
+ obj-$(CONFIG_DRPAI)		+= drpai/
++obj-$(CONFIG_DRP)		+= drpai/
+diff --git a/drivers/drpai/Kconfig b/drivers/drpai/Kconfig
+index 834a355..6a776c5 100644
+--- a/drivers/drpai/Kconfig
++++ b/drivers/drpai/Kconfig
+@@ -11,4 +11,11 @@ config DRPAI
+ 	  DRP-AI is a peripheral hardware that accelerates AI.
+ 	  If you want DRP-AI support, you should say Y here.
+ 
++config DRP
++	tristate "DRP support"
++	default y
++	help
++	  DRP is a peripheral hardware that accelerates image processing.
++	  If you want DRP support, you should say Y here.
++
+ endmenu
+diff --git a/drivers/drpai/Makefile b/drivers/drpai/Makefile
+index 3d44ea4..c289fe0 100644
+--- a/drivers/drpai/Makefile
++++ b/drivers/drpai/Makefile
+@@ -4,5 +4,6 @@
+ #
+ 
+ obj-$(CONFIG_DRPAI)	+= drpai-core.o drpai-if.o
++obj-$(CONFIG_DRP)	+= drpai-core.o drp-if.o
+ 
+ 
+diff --git b/drivers/drpai/drp-if.c b/drivers/drpai/drp-if.c
+new file mode 100644
+index 0000000..2ff82eb
+--- /dev/null
++++ b/drivers/drpai/drp-if.c
+@@ -0,0 +1,1390 @@
++/*
++ * Driver for the Renesas RZ/V2MA DRP unit
++ *
++ * Copyright (C) 2021 Renesas Electronics Corporation
++ *
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; version 2 of the License.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#include <asm/cacheflush.h>
++#include <asm/current.h>
++#include <asm/io.h>
++#include <asm/uaccess.h>
++#include <linux/cdev.h>
++#include <linux/device.h>
++#include <linux/dma-mapping.h>
++#include <linux/fs.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/miscdevice.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/pm.h>
++#include <linux/poll.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/types.h>
++#include <linux/uaccess.h>
++#include <linux/wait.h>
++#include <linux/fs.h>
++#include <asm/uaccess.h>
++#include <linux/buffer_head.h>
++#include <linux/dma-mapping.h>
++#include <linux/delay.h>
++#include <linux/clk.h>
++#include <linux/reset.h>
++#include <linux/drp.h>    /* Header file for DRP-AI Driver */
++#include "drpai-core.h"     /* Header file for DRP-AI Core */
++
++/*Macro definitions*/
++#define SYS_SIZE                    (1024)
++#define SYS_DRP_BANK                (0x38)
++#define DRPB_MASK_UPPER_BIT         (0x0000000300000000)
++#define SYS_MASK_DRP                (0x00000300)
++#define SYS_SHIFT                   (24)
++
++#define DRPB_DRIVER_VERSION         "1.20 rel.2a"
++#define DRPB_DEV_NUM                (1)
++#define DRPB_DRIVER_NAME            "drp"     /* Device name */
++#define DRPB_64BYTE_ALIGN           (0x3F)      /* Check 64-byte alignment */
++#define DRPB_STATUS_IDLE_RW         (10)
++#define DRPB_STATUS_ASSIGN          (11)
++#define DRPB_STATUS_READ_MEM        (13)
++#define DRPB_STATUS_WRITE           (15)
++
++#define DRPB_SGL_DRP_DESC_SIZE      (80)
++#define DRPB_DESC_CMD_SIZE          (16)
++#define DRPB_CMA_SIZE               ((DRPB_SGL_DRP_DESC_SIZE * DRP_SEQ_NUM) + DRPB_DESC_CMD_SIZE + 64)
++
++#define DRPB_MAX_PROCESS_CFG        (1)
++#define MAX_SEM_TIMEOUT             (msecs_to_jiffies(1000))
++#define DRP_IRQ_CHECK_ENABLE        (1)
++#define DRP_IRQ_CHECK_DISABLE       (0)
++
++/* A function called from the kernel */
++static int drpb_probe(struct platform_device *pdev);
++static int drpb_remove(struct platform_device *pdev);
++static int drpb_open(struct inode *inode, struct file *file);
++static int drpb_close(struct inode *inode, struct file *file);
++static int drpb_flush(struct file *file, fl_owner_t id);
++static ssize_t  drpb_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
++static ssize_t  drpb_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
++static long drpb_ioctl(struct file *filp, unsigned int cmd, unsigned long arg); 
++static unsigned int drpb_poll( struct file* filp, poll_table* wait );
++static irqreturn_t irq_drpb_nmlint(int irq, void *dev);
++static irqreturn_t irq_drpb_errint(int irq, void *dev);
++
++/* Internal function */
++static int drpb_regist_driver(void);
++static int drpb_regist_device(struct platform_device *pdev);
++static void drpb_unregist_driver(void);
++static void drpb_unregist_device(void);
++static void drpb_init_device(uint32_t ch);
++static int8_t drpb_reset_device(uint32_t ch);
++static long drpb_ioctl_assign(struct file *filp, unsigned int cmd, unsigned long arg);
++static long drpb_ioctl_start(struct file *filp, unsigned int cmd, unsigned long arg);
++static long drpb_ioctl_get_status(struct file *filp, unsigned int cmd, unsigned long arg);
++static long drpb_ioctl_reset(struct file *filp, unsigned int cmd, unsigned long arg);
++static long drpb_ioctl_set_seq(struct file *filp, unsigned int cmd, unsigned long arg);
++static long drpb_ioctl_get_codec_area(struct file *filp, unsigned int cmd, unsigned long arg);
++static int8_t drpb_get_sys_bank(uint64_t *bank);
++static int drpb_drp_cpg_init(void);
++
++/* Linux device driver initialization */
++static const unsigned int MINOR_BASE = 0;
++static const unsigned int MINOR_NUM  = DRPB_DEV_NUM;       /* Minor number */
++static unsigned int drpai_major;                    /* Major number (decided dinamically) */
++static struct cdev drpai_cdev;                      /* Character device object */
++static struct class *drpai_class = NULL;            /* class object */
++struct device *drp_device_array[DRPB_DEV_NUM];
++
++struct drp_priv {
++    struct platform_device *pdev;
++    const char *dev_name;
++    spinlock_t lock;
++    uint64_t bank;
++    void __iomem *drp_base;
++    struct semaphore sem;
++    uint32_t drp_irq_flag;
++    struct reset_control *rstc;
++    refcount_t count;
++};
++
++struct drp_desc_info
++{
++    drp_seq_t seq;
++    char* vaddr;
++    uint64_t phyaddr;
++};
++
++/* Virtual base address of register */
++static void __iomem *drpb_base_addr[DRP_CH_NUM];
++static resource_size_t drp_size;
++static resource_size_t sysctrl_region_base_addr;
++static resource_size_t drp_region_base_addr = 0;
++static resource_size_t drp_region_size = 0;
++
++/* handler table */
++static struct file_operations s_mydevice_fops = {
++    .open           = drpb_open,
++    .release        = drpb_close,
++    .write          = drpb_write,
++    .read           = drpb_read,
++    .unlocked_ioctl = drpb_ioctl,
++    .compat_ioctl   = drpb_ioctl, /* for 32-bit App */
++    .poll           = drpb_poll,
++    .flush          = drpb_flush,
++};
++
++static const struct of_device_id drpb_match[] = {
++
++    { .compatible = "renesas,rzv2ma-drpb",},
++    { /* sentinel */ }
++};
++static struct platform_driver drpb_platform_driver = {
++    .driver = {
++        .name   = "drpb-rz",
++        .of_match_table = drpb_match,
++    },
++    .probe      = drpb_probe,
++    .remove     = drpb_remove,
++};
++
++static struct drp_priv *drp_priv;
++static DECLARE_WAIT_QUEUE_HEAD(read_q);
++static DEFINE_SEMAPHORE(rw_sem);
++static drpai_status_t drpai_status;
++static drpai_data_t drpai_data;
++static uint32_t rw_status;
++static uint32_t write_count;
++static uint32_t read_count;
++
++/* DRP single operation */
++static drpai_data_t proc[DRP_SEQ_NUM * 2];
++/*DRP Descriptor*/
++// 1. Load drpcfg
++// 2. Set DRP core
++// 3. Read DRP param
++// 4. Start processing of DRP
++// 5. Link descriptor
++// 6. AIMAC descriptor
++static unsigned char drp_single_desc_bin[] =
++{
++  0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x80, 0x00, 0x01, 0x00, 0x91, 0x81, 0x50, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x07, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x80, 0x00, 0x01, 0x00, 0x91, 0x81, 0x20, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
++};
++static drp_seq_t seq;
++static drpai_odif_intcnto_t odif_intcnto;
++
++static int drpb_probe(struct platform_device *pdev)
++{
++    drpb_regist_driver();
++    drpb_regist_device(pdev);
++
++    return 0;
++}
++
++static int drpb_remove(struct platform_device *pdev)
++{
++    drpb_unregist_driver();
++    drpb_unregist_device();
++
++    return 0;
++}
++
++static int drpb_open(struct inode *inode, struct file *file)
++{
++    int result = 0;
++    struct drp_priv *priv = drp_priv;
++    unsigned long flags;
++    uint64_t bank;
++    struct drp_desc_info *desc_info;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++    DRPAI_DEBUG_PRINT("status1:%d\n", drpai_status.status);
++    DRPAI_DEBUG_PRINT("status_rw1:%d\n", rw_status);
++
++    if(unlikely(down_timeout(&priv->sem, MAX_SEM_TIMEOUT)))
++    {
++        result = -ETIMEDOUT;
++        goto end;
++    }
++
++    if(1 == refcount_read(&priv->count))
++    {
++
++        /* Get sys register value */
++        if(0 != drpb_get_sys_bank(&bank))
++        {
++            result = -EFAULT;
++            goto end;
++        }
++
++        /* Initialize CPG */
++        if(R_DRPAI_SUCCESS != drpb_drp_cpg_init())
++        {
++            result = -EIO;
++            goto end;
++        }
++
++        /* Initialize DRP */
++        drpb_init_device(0);
++
++        /* Reset DRP */
++        if(R_DRPAI_SUCCESS != drpb_reset_device(0))
++        {
++            result = -EIO;
++            goto end;
++        }
++
++        /* Initialize DRP */
++        drpb_init_device(0);
++
++        /* INIT -> IDLE */
++        spin_lock_irqsave(&priv->lock, flags);
++        drpai_status.status = DRP_STATUS_IDLE;
++        priv->bank = bank;
++        spin_unlock_irqrestore(&priv->lock, flags);
++
++        /* Initialization flag */
++        rw_status = DRPB_STATUS_IDLE_RW;
++    }
++
++    desc_info = kzalloc(sizeof(struct drp_desc_info), GFP_KERNEL);
++    if (!desc_info)
++    {
++        result = -ENOMEM;
++        goto end;
++    }
++
++    /* DRP single operation */
++    desc_info->vaddr = NULL;
++    desc_info->phyaddr = 0x0;
++    file->private_data = desc_info;
++
++    /* Increment reference count */
++    refcount_inc(&priv->count);
++
++    DRPAI_DEBUG_PRINT("status2:%d\n", drpai_status.status);
++    DRPAI_DEBUG_PRINT("status_rw2:%d\n", rw_status);
++
++    goto end;
++end:
++    if((-ETIMEDOUT != result))
++    {
++        up(&priv->sem);
++    }
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static int drpb_close(struct inode *inode, struct file *file)
++{
++    int result = 0;
++    struct drp_priv *priv = drp_priv;
++    unsigned long flags;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    if(unlikely(down_timeout(&priv->sem, MAX_SEM_TIMEOUT))) 
++    {
++        /* Note: this errno won't be returned to user*/
++        result = -ETIMEDOUT;
++        DRPAI_DEBUG_PRINT("API semaphore obtained failed\n");
++        goto end;
++    }
++
++    DRPAI_DEBUG_PRINT("status1:%d\n", drpai_status.status);
++    DRPAI_DEBUG_PRINT("status_rw1:%d\n", rw_status);
++
++    if(2 == refcount_read(&priv->count))
++    {
++        if(R_DRPAI_SUCCESS != drpb_reset_device(0))
++        {
++            DRPAI_DEBUG_PRINT("Reset failed\n");
++        }
++
++        /* IDLE -> INIT */
++        /* RUN  -> INIT */
++        spin_lock_irqsave(&priv->lock, flags);
++        drpai_status.status = DRP_STATUS_INIT;
++        drpai_status.err    = DRP_ERRINFO_SUCCESS;
++
++        /* IDLE_RW */
++        rw_status = DRPB_STATUS_IDLE_RW;
++        spin_unlock_irqrestore(&priv->lock, flags);
++    }
++    /* Decrement referenece count */
++    refcount_dec(&priv->count);
++
++    DRPAI_DEBUG_PRINT("status2:%d\n", drpai_status.status);
++    DRPAI_DEBUG_PRINT("status_rw2:%d\n", rw_status);
++
++    goto end;
++end:
++    if((-ETIMEDOUT != result))
++    {
++        up(&priv->sem);
++    }
++    if(file->private_data) 
++    {
++        DRPAI_DEBUG_PRINT("kfree is called\n");
++        kfree(file->private_data);
++        file->private_data = NULL;
++    }
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static int drpb_flush(struct file *file, fl_owner_t id)
++{
++    DRPAI_DEBUG_PRINT("start.\n");
++    DRPAI_DEBUG_PRINT("end.\n");
++    return 0;
++}
++
++static ssize_t  drpb_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
++{
++    ssize_t result = 0;
++    void *p_drpai_cma = 0;
++    uint64_t addr;
++    struct drp_priv *priv = drp_priv;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    if(unlikely(down_trylock(&rw_sem)))
++    {
++        result = -ERESTART;
++        goto end;
++    }
++
++    DRPAI_DEBUG_PRINT("status_rw1:%d\n", rw_status);
++
++    /* Check status */
++    if (!((DRPB_STATUS_ASSIGN == rw_status) || (DRPB_STATUS_WRITE == rw_status)))
++    {
++        result = -EACCES;
++        goto end;
++    }
++
++    /* Check Argument */
++    if (NULL == buf)
++    {
++        result = -EFAULT;
++        goto end;
++    }
++    if (0 == count)
++    {
++        result = -EINVAL;
++        goto end;
++    }
++
++    /* DRPB_STATUS_ASSIGN -> DRPB_STATUS_WRITE */
++    /* DRPB_STATUS_WRITE  -> DRPB_STATUS_WRITE */
++    rw_status = DRPB_STATUS_WRITE;
++    DRPAI_DEBUG_PRINT("status_rw2:%d\n", rw_status);
++
++    /* Expand to DRP for CMA */
++    addr = priv->bank | (uint64_t)drpai_data.address;
++    p_drpai_cma = phys_to_virt(addr + (uint64_t)write_count);
++    if (p_drpai_cma == 0)
++    {
++        result = -EFAULT;
++        goto end;
++    }
++    if ( !( drpai_data.size >= (write_count + count) ) )
++    {
++        count = drpai_data.size - write_count;
++    }
++    if (copy_from_user(p_drpai_cma, buf, count))
++    {
++        result = -EFAULT;
++        goto end;
++    }
++    write_count = write_count + count;
++
++    /* DRPB_STATUS_WRITE -> DRPB_STATUS_IDLE_RW */
++    if (drpai_data.size <= write_count)
++    {
++        p_drpai_cma = phys_to_virt(addr);
++        if (p_drpai_cma == 0)
++        {
++            result = -EFAULT;
++            goto end;
++        }
++        __flush_dcache_area(p_drpai_cma, drpai_data.size);
++        rw_status = DRPB_STATUS_IDLE_RW;
++    }
++
++    result = count;
++    goto end;
++end:
++    if(-ERESTART != result)
++    {
++        up(&rw_sem);
++    }
++    DRPAI_DEBUG_PRINT("status_rw3:%d\n", rw_status);
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static ssize_t drpb_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
++{
++    ssize_t result = 0;
++    void *p_drpai_cma = 0;
++    uint32_t i;
++    uint64_t addr;
++    struct drp_priv *priv = drp_priv;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    if(unlikely(down_trylock(&rw_sem)))
++    {
++        result = -ERESTART;
++        goto end;
++    }
++
++    DRPAI_DEBUG_PRINT("status_rw1:%d\n", rw_status);
++
++    /* Check status */
++    if (!((DRPB_STATUS_ASSIGN  == rw_status) ||
++        (DRPB_STATUS_READ_MEM  == rw_status)))
++    {
++        result = -EACCES;
++        goto end;
++    }
++
++    /* Check Argument */
++    if (NULL == buf)
++    {
++        result = -EFAULT;
++        goto end;
++    }
++    if (0 == count)
++    {
++        result = -EINVAL;
++        goto end;
++    }
++
++    /* DRPB_STATUS_ASSIGN -> DRPB_STATUS_READ_MEM */
++    if (DRPB_STATUS_ASSIGN == rw_status)
++    {
++        rw_status = DRPB_STATUS_READ_MEM;
++    }
++    else
++    {
++        ; /* Do nothing */
++    }
++    DRPAI_DEBUG_PRINT("status_rw2:%d\n", rw_status);
++
++    /* Read DRP-AI memory */
++    if (DRPB_STATUS_READ_MEM == rw_status)
++    {
++        addr = priv->bank | (uint64_t)drpai_data.address;
++        p_drpai_cma = phys_to_virt(addr + (uint64_t)read_count);
++        if (p_drpai_cma == 0)
++        {
++            result = -EFAULT;
++            goto end;
++        }
++        if ( !( drpai_data.size >= (read_count + count) ) )
++        {
++            count = drpai_data.size - read_count;
++        }
++        /* Copy arguments from kernel space to user space */
++        if (copy_to_user(buf, p_drpai_cma, count))
++        {
++            result = -EFAULT;
++            goto end;
++        }
++        read_count = read_count + count;
++
++        /* DRPAI_STATUS_READ -> DRPB_STATUS_IDLE_RW */
++        if (drpai_data.size <= read_count)
++        {
++            rw_status = DRPB_STATUS_IDLE_RW;
++        }
++        i = count;
++    }
++    else
++    {
++        ; /* Do nothing */
++    }
++
++    result = i;
++    goto end;
++end:
++    if(-ERESTART != result)
++    {
++        up(&rw_sem);
++    }
++    DRPAI_DEBUG_PRINT("status_rw3:%d\n", rw_status);
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static long drpb_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++    long result = 0;
++
++    switch (cmd) {
++    case DRP_ASSIGN:
++        DRPAI_DEBUG_PRINT("ioctl(DRPAI_ASSIGN)\n");
++        result = drpb_ioctl_assign(filp, cmd, arg);
++        break;
++    case DRP_START:
++        DRPAI_DEBUG_PRINT("ioctl(DRPAI_START)\n");
++        result = drpb_ioctl_start(filp, cmd, arg);
++        break;
++    case DRP_RESET:
++        DRPAI_DEBUG_PRINT("ioctl(DRPAI_RESET)\n");
++        result = drpb_ioctl_reset(filp, cmd, arg);
++        break;
++    case DRP_GET_STATUS:
++        DRPAI_DEBUG_PRINT("ioctl(DRPAI_GET_STATUS)\n");
++        result = drpb_ioctl_get_status(filp, cmd, arg);
++        break;
++    case DRP_SET_SEQ:
++        DRPAI_DEBUG_PRINT("ioctl(DRPAI_SET_SEQ)\n");
++        result = drpb_ioctl_set_seq(filp, cmd, arg);
++        break;
++    case DRP_GET_CODEC_AREA:
++        DRPAI_DEBUG_PRINT("ioctl(DRPAI_GET_CODEC_AREA)\n");
++        result = drpb_ioctl_get_codec_area(filp, cmd, arg);
++        break;
++    default:
++        DRPAI_DEBUG_PRINT("unsupported command %d\n", cmd);
++        result = -EFAULT;
++        break;
++    }
++    goto end;
++
++end:
++    return result;
++}
++
++static unsigned int drpb_poll( struct file* filp, poll_table* wait )
++{
++    unsigned int retmask = 0;
++    struct drp_priv *priv = drp_priv;
++    unsigned long flags;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    spin_lock_irqsave(&priv->lock, flags);
++    poll_wait( filp, &read_q,  wait );
++
++    if (DRP_IRQ_CHECK_DISABLE == priv->drp_irq_flag)
++    {
++        // Notify wakeup to user
++        retmask |= ( POLLIN  | POLLRDNORM );
++    }
++    spin_unlock_irqrestore(&priv->lock, flags);
++
++    DRPAI_DEBUG_PRINT("end.\n");
++    return retmask;
++}
++static irqreturn_t irq_drpb_nmlint(int irq, void *dev)
++{
++    drpai_odif_intcnto_t local_odif_intcnto;
++    struct drp_priv *priv = drp_priv;
++    unsigned long flags;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++    DRPAI_DEBUG_PRINT("status1:%d\n", drpai_status.status);
++
++    spin_lock_irqsave(&priv->lock, flags);
++    /* DRP normal interrupt processing */
++    R_DRPB_DRP_Nmlint(drpb_base_addr[0], 0, &local_odif_intcnto);
++
++    odif_intcnto.ch0 += local_odif_intcnto.ch0;
++    odif_intcnto.ch1 += local_odif_intcnto.ch1;
++    odif_intcnto.ch2 += local_odif_intcnto.ch2;
++    odif_intcnto.ch3 += local_odif_intcnto.ch3;
++
++    DRPAI_DEBUG_PRINT("ODIF_INTCNTO0 : 0x%08X\n", odif_intcnto.ch0);
++    DRPAI_DEBUG_PRINT("ODIF_INTCNTO1 : 0x%08X\n", odif_intcnto.ch1);
++    DRPAI_DEBUG_PRINT("ODIF_INTCNTO2 : 0x%08X\n", odif_intcnto.ch2);
++    DRPAI_DEBUG_PRINT("ODIF_INTCNTO3 : 0x%08X\n", odif_intcnto.ch3);
++
++    if ((seq.num == odif_intcnto.ch0) &&
++        (seq.num == odif_intcnto.ch1) &&
++        (seq.num == odif_intcnto.ch2) &&
++        (seq.num == odif_intcnto.ch3))
++    {
++        /* Internal state update */
++        drpai_status.status = DRP_STATUS_IDLE;
++        priv->drp_irq_flag  = DRP_IRQ_CHECK_DISABLE;
++
++        /* Wake up the process */
++        wake_up_interruptible( &read_q );
++    }
++    spin_unlock_irqrestore(&priv->lock, flags);
++
++    DRPAI_DEBUG_PRINT("status2:%d\n", drpai_status.status);
++    DRPAI_DEBUG_PRINT("end.\n");
++    return IRQ_HANDLED;
++}
++static irqreturn_t irq_drpb_errint(int irq, void *dev)
++{
++    struct drp_priv *priv = drp_priv;
++    unsigned long flags;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++    DRPAI_DEBUG_PRINT("status1:%d\n", drpai_status.status);
++
++    spin_lock_irqsave(&priv->lock, flags);
++    /* DRP error interrupt processing */
++    R_DRPB_DRP_Errint(drpb_base_addr[0], 0);
++
++    /* Internal state update */
++    drpai_status.err    = DRP_ERRINFO_DRP_ERR;
++    drpai_status.status = DRP_STATUS_IDLE;
++    priv->drp_irq_flag  = DRP_IRQ_CHECK_DISABLE;
++
++    /* Wake up the process */
++    wake_up_interruptible( &read_q );
++    spin_unlock_irqrestore(&priv->lock, flags);
++
++    DRPAI_DEBUG_PRINT("status2:%d\n", drpai_status.status);
++    DRPAI_DEBUG_PRINT("end.\n");
++    return IRQ_HANDLED;
++}
++
++static int drpb_regist_driver(void)
++{
++    int alloc_ret = 0;
++    int cdev_err = 0;
++    dev_t dev;
++    int minor;
++    int ptr_err;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    /* Get free major number. */
++    alloc_ret = alloc_chrdev_region(&dev, MINOR_BASE, MINOR_NUM, DRPB_DRIVER_NAME);
++    if (alloc_ret != 0) {
++        pr_err("DRP Driver: alloc_chrdev_region = %d\n", alloc_ret);
++        return -1;
++    }
++
++    /* Save major number. */
++    drpai_major = MAJOR(dev);
++    dev = MKDEV(drpai_major, MINOR_BASE);
++
++    /* Initialize cdev and registration handler table. */
++    cdev_init(&drpai_cdev, &s_mydevice_fops);
++    drpai_cdev.owner = THIS_MODULE;
++
++    /* Registration cdev */
++    cdev_err = cdev_add(&drpai_cdev, dev, MINOR_NUM);
++    if (cdev_err != 0) {
++        pr_err("DRP Driver: cdev_add = %d\n", cdev_err);
++        unregister_chrdev_region(dev, MINOR_NUM);
++        return -1;
++    }
++
++    /* Cleate class "/sys/class/drpai/" */
++    drpai_class = class_create(THIS_MODULE, DRPB_DRIVER_NAME);
++    if (IS_ERR(drpai_class)) {
++        ptr_err = PTR_ERR(drpai_class);
++        pr_err("DRP Driver: class_create = %d\n", ptr_err);
++        cdev_del(&drpai_cdev);
++        unregister_chrdev_region(dev, MINOR_NUM);
++        return -1;
++    }
++
++    /* Make "/sys/class/drpai/drpai*" */
++    for (minor = MINOR_BASE; minor < MINOR_BASE + MINOR_NUM; minor++) {
++        drp_device_array[minor - MINOR_BASE] =
++        device_create(drpai_class, NULL, MKDEV(drpai_major, minor), NULL, DRPB_DRIVER_NAME "%d", minor);
++    }
++
++    /* Status initialization */
++    drpai_status.status = DRP_STATUS_INIT;
++
++    DRPAI_DEBUG_PRINT("end.\n");
++    return 0;
++}
++
++static int drpb_regist_device(struct platform_device *pdev)
++{
++    struct resource *res;
++    struct resource reserved_res;
++    struct device_node *np;
++    int irq, ret;
++    struct drp_priv *priv;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    priv = devm_kzalloc(&pdev->dev, sizeof(struct drp_priv), GFP_KERNEL);
++    if (!priv) {
++        dev_err(&pdev->dev, "cannot allocate private data\n");
++        return -ENOMEM;
++    }
++
++    /*Initialize DRP private structure*/
++    platform_set_drvdata(pdev, priv);
++    priv->pdev = pdev;
++    priv->dev_name = dev_name(&pdev->dev);
++    spin_lock_init(&priv->lock);
++    sema_init(&priv->sem, DRPB_DEV_NUM);
++    priv->drp_irq_flag = DRP_IRQ_CHECK_DISABLE;
++    drp_priv = priv;
++    refcount_set(&priv->count, 1);
++
++    dev_info(&pdev->dev, "DRP Driver version : %s V2MA\n", DRPB_DRIVER_VERSION);
++    /* Get reserved register region from Device tree.*/
++    np = of_parse_phandle(pdev->dev.of_node, "sysctrl", 0);
++    if (!np) {
++        dev_err(&pdev->dev, "No %s specified\n", "sysctrl");
++        return -ENOMEM;
++    }
++
++    /* Convert register region to a struct resource */
++    ret = of_address_to_resource(np, 0, &reserved_res);
++    if (ret) {
++        dev_err(&pdev->dev, "No memory address assigned to the region\n");
++        return -ENOMEM;
++    }
++    sysctrl_region_base_addr = reserved_res.start;
++    dev_info(&pdev->dev, "sysctrl register region start 0x%016llX\n", sysctrl_region_base_addr);
++
++    /* Convert DRP base address from physical to virtual */
++    res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++    if (!res) {
++        dev_err(&pdev->dev, "cannot get resources (reg)\n");
++        return -EINVAL;
++    }
++    priv->drp_base = devm_ioremap(&pdev->dev, res->start, resource_size(res));
++    if (!priv->drp_base) {
++        dev_err(&pdev->dev, "cannot ioremap\n");
++        return -EINVAL;
++    }
++    drpb_base_addr[0] = priv->drp_base;
++    drp_size = resource_size(res);
++    dev_info(&pdev->dev, "DRPB base address 0x%08llX, size 0x%08llX\n", res->start, drp_size);
++
++    /* Registering an interrupt handler */
++    irq = platform_get_irq(pdev, 0);
++    ret = devm_request_irq(&pdev->dev, irq, irq_drpb_nmlint, 0, "drpb nmlint", priv);
++    if (ret) {
++        dev_err(&pdev->dev, "Failed to claim IRQ!\n");
++        return ret;
++    }
++    irq = platform_get_irq(pdev, 1);
++    ret = devm_request_irq(&pdev->dev, irq, irq_drpb_errint, 0, "drpb errint", priv);
++    if (ret) {
++        dev_err(&pdev->dev, "Failed to claim IRQ!\n");
++        return ret;
++    }
++
++    /* Get reset controller info */
++    priv->rstc = devm_reset_control_get(&pdev->dev, NULL);
++    if (IS_ERR(priv->rstc))
++    {
++        dev_err(&pdev->dev, "Failed to get DRP CPG reset controller\n");
++        return PTR_ERR(priv->rstc);
++    }
++    else
++    {
++        DRPAI_DEBUG_PRINT("Get DRP CPG reset controller\n");      
++    } 
++
++    {
++        struct device_node *np;
++
++        np = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
++        if (!np) 
++        {
++            dev_err(&pdev->dev, "No %s specified\n", "memory-region");
++            return -ENOMEM;
++        }
++        
++       /* Convert memory region to a struct resource */
++        ret = of_address_to_resource(np, 0, &reserved_res);
++        if (ret) 
++        {
++            dev_err(&pdev->dev, "No memory address assigned to the region\n");
++            return -ENOMEM;
++        }
++        drp_region_base_addr = reserved_res.start;
++        drp_region_size = resource_size(&reserved_res);
++        dev_info(&pdev->dev, "DRP(CODEC) memory region start 0x%016llX, size 0x%08llX\n", drp_region_base_addr, drp_region_size);
++    }
++
++    DRPAI_DEBUG_PRINT("end.\n");
++    return 0;
++}
++
++static void drpb_unregist_driver(void)
++{
++    dev_t dev = MKDEV(drpai_major, MINOR_BASE);
++    int minor;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    /* Delete "/sys/class/mydevice/mydevice*". */
++    for (minor = MINOR_BASE; minor < MINOR_BASE + MINOR_NUM; minor++) {
++        device_destroy(drpai_class, MKDEV(drpai_major, minor));
++    }
++
++    /* Destroy "/sys/class/mydevice/". */
++    class_destroy(drpai_class);
++
++    /* Delete cdev from kernel. */
++    cdev_del(&drpai_cdev);
++
++    /* Unregistration */
++    unregister_chrdev_region(dev, MINOR_NUM);
++    DRPAI_DEBUG_PRINT("end.\n");
++}
++
++static void drpb_unregist_device(void)
++{
++    /* Do nothing */
++}
++
++static void drpb_init_device(uint32_t ch)
++{
++    struct drp_priv *priv = drp_priv;
++    unsigned long flags;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    spin_lock_irqsave(&priv->lock, flags);
++    priv->drp_irq_flag = DRP_IRQ_CHECK_DISABLE;
++    spin_unlock_irqrestore(&priv->lock, flags);
++    (void)R_DRPB_DRP_Open(drpb_base_addr[0], 0, &priv->lock);
++
++    DRPAI_DEBUG_PRINT("end.\n");
++}
++
++static long drpb_ioctl_assign(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++    long result = 0;
++    void *p_virt_address = 0;
++    uint64_t addr, size;
++    struct drp_priv *priv = drp_priv;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    if(unlikely(down_trylock(&rw_sem)))
++    {
++        result = -ERESTART;
++        goto end;
++    }
++
++    DRPAI_DEBUG_PRINT("status_rw1:%d\n", rw_status);
++
++    /* Check NULL */
++    if (0 == arg)
++    {
++        result = -EINVAL;
++        goto end;
++    }
++
++    /* Check status */
++    if (DRPB_STATUS_IDLE_RW != rw_status)
++    {
++        result = -EACCES;
++        goto end;
++    }
++
++    /* Copy arguments from user space to kernel space */
++    if (copy_from_user(&drpai_data, (void __user *)arg, sizeof(drpai_data_t)))
++    {
++        result = -EFAULT;
++        goto end;
++    }
++    /* Check Argument */
++    addr = priv->bank | (uint64_t)drpai_data.address;
++    size = (uint64_t)drpai_data.size;
++    if (0 != (addr & DRPB_64BYTE_ALIGN))
++    {
++        result = -EINVAL;
++        goto end;
++    }
++
++    /* Data cache invalidate. DRP-AI W -> CPU R */
++    addr = priv->bank | (uint64_t)drpai_data.address;
++    p_virt_address = phys_to_virt(addr);
++    if (p_virt_address == 0)
++    {
++        result = -EFAULT;
++        goto end;
++    }
++    __inval_dcache_area(p_virt_address, drpai_data.size);
++
++    /* Initialization of read / write processing variables */
++    rw_status   = DRPB_STATUS_ASSIGN;
++    write_count = 0;
++    read_count  = 0;
++
++    goto end;
++end:
++    if(-ERESTART != result)
++    {
++        up(&rw_sem);
++    }
++    DRPAI_DEBUG_PRINT("status_rw2:%d\n", rw_status);
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static long drpb_ioctl_start(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++    int result = 0;
++    int i;
++    struct drp_priv *priv = drp_priv;
++    unsigned long flags;
++    struct drp_desc_info *desc_info = filp->private_data;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    if(unlikely(down_timeout(&priv->sem, MAX_SEM_TIMEOUT))) 
++    {
++        result = -ETIMEDOUT;
++        goto end;
++    }
++
++    DRPAI_DEBUG_PRINT("status1:%d\n", drpai_status.status);
++
++    /* Check NULL */
++    if (0 == arg)
++    {
++        result = -EINVAL;
++        goto end;
++    }
++    if(NULL == desc_info->vaddr)
++    {
++        result = -EACCES;
++        goto end;
++    }
++
++    /* Check status */
++    spin_lock_irqsave(&priv->lock, flags);
++    if (DRP_STATUS_RUN == drpai_status.status)
++    {
++        spin_unlock_irqrestore(&priv->lock, flags);
++        result = -EBUSY;
++        goto end;
++    }
++    spin_unlock_irqrestore(&priv->lock, flags);
++    /* Copy arguments from user space to kernel space */
++    if (copy_from_user(&proc[0], (void __user *)arg, sizeof(proc)))
++    {
++        result = -EFAULT;
++        goto end;
++    }
++
++    spin_lock_irqsave(&priv->lock, flags);
++    odif_intcnto.ch0 = 0;
++    odif_intcnto.ch1 = 0;
++    odif_intcnto.ch2 = 0;
++    odif_intcnto.ch3 = 0;
++    spin_unlock_irqrestore(&priv->lock, flags);
++
++    /* Check Argument */
++    for (i = 0; i < (desc_info->seq.num * 2); i++)
++    {
++        if (0 != (proc[i].address & DRPB_64BYTE_ALIGN))
++        {
++            result = -EINVAL;
++            goto end;
++        }
++    }
++    for (i = 0; i < desc_info->seq.num; i++)
++    {
++        /* DRPcfg address and size settings */
++        *(uint32_t*)(desc_info->vaddr + (DRPB_SGL_DRP_DESC_SIZE * i) + 4) = proc[i * 2].address;
++        *(uint32_t*)(desc_info->vaddr + (DRPB_SGL_DRP_DESC_SIZE * i) + 8) = proc[i * 2].size;
++
++        /* DRP param address and size settings */
++        *(uint32_t*)(desc_info->vaddr + (DRPB_SGL_DRP_DESC_SIZE * i) + 36) = proc[i * 2 + 1].address;
++        *(uint32_t*)(desc_info->vaddr + (DRPB_SGL_DRP_DESC_SIZE * i) + 40) = proc[i * 2 + 1].size;
++
++        /* LV disable */
++        *(desc_info->vaddr + (DRPB_SGL_DRP_DESC_SIZE * i) + 67) = 0x08;
++    }
++    __flush_dcache_area(desc_info->vaddr, DRPB_CMA_SIZE);
++
++    /* Init drpai_status.err */
++    spin_lock_irqsave(&priv->lock, flags);
++    drpai_status.err = DRP_ERRINFO_SUCCESS;
++
++    /* IDLE -> RUN */
++    drpai_status.status = DRP_STATUS_RUN;
++    priv->drp_irq_flag  = DRP_IRQ_CHECK_ENABLE;
++    memcpy(&seq, &desc_info->seq, sizeof(drp_seq_t));
++    spin_unlock_irqrestore(&priv->lock, flags);
++
++    DRPAI_DEBUG_PRINT("status2:%d\n", drpai_status.status);
++
++    /* Kick */
++    (void)R_DRPAI_DRP_Start(drpb_base_addr[0], 0, desc_info->phyaddr);
++
++    goto end;
++end:
++    if(-ETIMEDOUT != result)
++    {
++        up(&priv->sem);
++    }
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static long drpb_ioctl_reset(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++    long result = 0;
++    struct drp_priv *priv = drp_priv;
++    unsigned long flags;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    if(unlikely(down_timeout(&priv->sem, MAX_SEM_TIMEOUT))) 
++    {
++        result = -ETIMEDOUT;
++        goto end;
++    }
++
++    DRPAI_DEBUG_PRINT("status1:   %d\n", drpai_status.status);
++    DRPAI_DEBUG_PRINT("status_rw1:%d\n", rw_status);
++
++    if(R_DRPAI_SUCCESS != drpb_reset_device(0))
++    {
++        result = -EIO;
++        goto end;
++    }
++    drpb_init_device(0);
++
++    /* Update internal state */
++    spin_lock_irqsave(&priv->lock, flags);
++    drpai_status.err    = DRPAI_ERRINFO_RESET;
++    drpai_status.status = DRPAI_STATUS_IDLE;
++
++    /* Wake up the process */
++    wake_up_interruptible( &read_q );
++    spin_unlock_irqrestore(&priv->lock, flags);
++
++    DRPAI_DEBUG_PRINT("status2:   %d\n", drpai_status.status);
++    DRPAI_DEBUG_PRINT("status_rw2:%d\n", rw_status);
++
++    result = 0;
++    goto end;
++end:
++    if(-ETIMEDOUT != result)
++    {
++        up(&priv->sem);
++    }
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static long drpb_ioctl_get_status(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++    long result = 0;
++    struct drp_priv *priv = drp_priv;
++    unsigned long flags;
++    drpai_status_t local_drpai_status;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    if(unlikely(down_timeout(&priv->sem, MAX_SEM_TIMEOUT))) 
++    {
++        result = -ETIMEDOUT;
++        goto end;
++    }
++    /* Check NULL */
++    if (0 == arg)
++    {
++        result = -EINVAL;
++        goto end;
++    }
++
++    /* Get the internal state of DRP-AI */
++    spin_lock_irqsave(&priv->lock, flags);
++    (void)R_DRPB_Status(drpb_base_addr[0], 0, &drpai_status);
++
++    /* Copy arguments from kernel space to user space */
++    local_drpai_status = drpai_status;
++    spin_unlock_irqrestore(&priv->lock, flags);
++    if (copy_to_user((void __user *)arg, &local_drpai_status, sizeof(drpai_status_t)))
++    {
++        result = -EFAULT;
++        goto end;
++    }
++
++    /* Check status */
++    if (DRP_STATUS_RUN == local_drpai_status.status)
++    {
++        result = -EBUSY;
++        goto end;
++    }
++
++    /* Check DRP-AI H/W error */
++    if ((DRP_ERRINFO_DRP_ERR == local_drpai_status.err) || (DRPAI_ERRINFO_AIMAC_ERR == local_drpai_status.err))
++    {
++        result = -EIO;
++        goto end;
++    }
++
++    goto end;
++end:
++    if(-ETIMEDOUT != result)
++    {
++        up(&priv->sem);
++    }
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static int8_t drpb_reset_device(uint32_t ch)
++{
++    int8_t retval = R_DRPAI_SUCCESS;
++    struct drp_priv *priv = drp_priv;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    /* Reset DRP */
++    if(R_DRPAI_SUCCESS != R_DRPB_DRP_Reset(drpb_base_addr[0], ch, &priv->lock)) 
++    {
++        retval = R_DRPAI_ERR_RESET;
++        goto end;
++    }
++
++    /* Reset CPG register */
++    if(R_DRPAI_SUCCESS != R_DRPB_CPG_Reset(priv->rstc)) 
++    {
++        retval = R_DRPAI_ERR_RESET;
++        goto end;
++    }
++
++    goto end;
++end:
++    DRPAI_DEBUG_PRINT("end.\n");
++    return retval;
++}
++
++static long drpb_ioctl_set_seq(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++    long result = 0;
++    int i;
++    struct drp_priv *priv = drp_priv;
++    struct drp_desc_info *desc_info = filp->private_data;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    if(unlikely(down_timeout(&priv->sem, MAX_SEM_TIMEOUT))) 
++    {
++        result = -ETIMEDOUT;
++        goto end;
++    }
++    DRPAI_DEBUG_PRINT("status1:%d\n", drpai_status.status);
++    /* Check NULL */
++    if (0 == arg)
++    {
++        result = -EINVAL;
++        goto end;
++    }
++
++    /* Check status */
++    if (DRP_STATUS_RUN == drpai_status.status)
++    {
++        result = -EBUSY;
++        goto end;
++    }
++
++    /* Copy arguments from user space to kernel space */
++    if (copy_from_user(&desc_info->seq, (void __user *)arg, sizeof(drp_seq_t)))
++    {
++        result = -EFAULT;
++        goto end;
++    }
++
++    /* Check Argument DRP Single */
++    if (DRPB_MAX_PROCESS_CFG != desc_info->seq.num)
++    {
++        result = -EINVAL;
++        goto end;
++    }
++    if (0 != (desc_info->seq.address & DRPB_64BYTE_ALIGN))
++    {
++        result = -EINVAL;
++        goto end;
++    }
++    for (i = 0; i < desc_info->seq.num; i++)
++    {
++        if (DRP_EXE_DRP != desc_info->seq.order[i])
++        {
++            result = -EINVAL;
++            goto end;
++        }
++    }
++
++    /*Initialize DRPcfg descriptor*/
++    desc_info->phyaddr = priv->bank | (uint64_t)desc_info->seq.address;
++    desc_info->vaddr = (char *)phys_to_virt(desc_info->phyaddr);
++    if (!desc_info->vaddr)
++    {
++        result = -EFAULT;
++        goto end;
++    }
++    DRPAI_DEBUG_PRINT("dmabuf:0x%016llX, dmaphys:0x%016llX\n", desc_info->vaddr, desc_info->phyaddr);
++    /* Deploy drp_single_desc */   
++    for (i = 0; i < DRP_SEQ_NUM; i++)
++    {
++        memcpy(desc_info->vaddr + (DRPB_SGL_DRP_DESC_SIZE * i), &drp_single_desc_bin[0], sizeof(drp_single_desc_bin));
++    }
++    __flush_dcache_area(desc_info->vaddr, DRPB_CMA_SIZE);
++
++    DRPAI_DEBUG_PRINT("status2:%d\n", drpai_status.status);
++end:
++    if(-ETIMEDOUT != result)
++    {
++        up(&priv->sem);
++    }
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static long drpb_ioctl_get_codec_area(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++    long result = 0;
++    drpai_data_t local_drpai_data;
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    /* Check NULL */
++    if (0 == arg)
++    {
++        result = -EINVAL;
++        goto end;
++    }
++
++    local_drpai_data.address = drp_region_base_addr;
++    local_drpai_data.size    = drp_region_size;
++
++    if (copy_to_user((void __user *)arg, &local_drpai_data, sizeof(drpai_data_t)))
++    {
++        result = -EFAULT;
++        goto end;
++    }
++
++end:
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static int8_t drpb_get_sys_bank(uint64_t *bank)
++{
++    int8_t result = 0;
++    void __iomem *base = NULL;
++    uint32_t reg_val;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    DRPAI_DEBUG_PRINT("sysctrl_region_base_addr = 0x%016llX\n", sysctrl_region_base_addr);
++    base = ioremap(sysctrl_region_base_addr, SYS_SIZE);
++    if (!base) {
++        result = -1;
++        goto end;
++    }
++    reg_val = ioread32(base + SYS_DRP_BANK);
++    *bank = ((uint64_t)reg_val & SYS_MASK_DRP) << SYS_SHIFT;
++    DRPAI_DEBUG_PRINT("SYS_DRP_BANK = 0x%08X\n", reg_val);
++    DRPAI_DEBUG_PRINT("bank = 0x%016llX\n", *bank);
++    goto end;
++end:
++    if(base)
++    {
++        iounmap(base);
++    }
++    DRPAI_DEBUG_PRINT("end.\n");
++    return result;
++}
++
++static int drpb_drp_cpg_init(void)
++{
++    int result;
++    struct drp_priv *priv = drp_priv;
++    int r_data;
++    int32_t i = 0;
++    bool is_stop = false;
++
++    DRPAI_DEBUG_PRINT("start.\n");
++
++    r_data = reset_control_status(priv->rstc);
++    DRPAI_DEBUG_PRINT("drp reset_control_status before %d \n", r_data);
++    
++    /* Access reset controller interface */
++    reset_control_reset(priv->rstc);
++
++    /* Check reset status */
++    i = 0;
++    while((RST_MAX_TIMEOUT > i) && (false == is_stop))
++    {
++        udelay(1);
++        i++;
++        r_data = reset_control_status(priv->rstc);
++        DRPAI_DEBUG_PRINT("drp reset_control_status %d \n", r_data);
++        if(CPG_RESET_SUCCESS == r_data)
++        {
++            is_stop = true;
++            break;
++        }
++    }
++
++    i = 0;
++    while((RST_MAX_TIMEOUT > i) && (false == is_stop))
++    {
++        usleep_range(100, 200);
++        i++;
++        r_data = reset_control_status(priv->rstc);
++        DRPAI_DEBUG_PRINT("drp reset_control_status %d \n", r_data);
++        if(CPG_RESET_SUCCESS == r_data)
++        {
++            is_stop = true;
++            break;
++        }
++    }
++
++    if(true == is_stop)
++    {
++        result =  R_DRPAI_SUCCESS;
++    }
++    else
++    {
++        result = R_DRPAI_ERR_RESET;
++        DRPAI_DEBUG_PRINT("CPG Reset failed. Reset Control Status: %d\n", r_data);
++    }
++
++    goto end;
++end:
++    DRPAI_DEBUG_PRINT("end.\n");
++
++    return result;
++}
++
++module_platform_driver(drpb_platform_driver);
++MODULE_DEVICE_TABLE(of, drpb_match);
++MODULE_DESCRIPTION("RZ/V2MA DRP driver");
++MODULE_AUTHOR("Renesas Electronics Corporation");
++MODULE_LICENSE("GPL v2");
++
+diff --git b/include/linux/drp.h b/include/linux/drp.h
+new file mode 100644
+index 0000000..7ecf471
+--- /dev/null
++++ b/include/linux/drp.h
+@@ -0,0 +1,22 @@
++/*
++ * Driver for the Renesas RZ/V2MA DRP unit
++ *
++ * Copyright (C) 2021 Renesas Electronics Corporation
++ *
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; version 2 of the License.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef _DRP_H
++#define _DRP_H
++
++#include <uapi/linux/drp.h>
++
++#endif /* _DRP_H */
+diff --git b/include/uapi/linux/drp.h b/include/uapi/linux/drp.h
+new file mode 100644
+index 0000000..23d735e
+--- /dev/null
++++ b/include/uapi/linux/drp.h
+@@ -0,0 +1,69 @@
++/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
++/*
++ * Driver for the Renesas RZ/V2MA DRP unit
++ *
++ * Copyright (C) 2021 Renesas Electronics Corporation
++ *
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; version 2 of the License.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef _UAPI__DRP_H
++#define _UAPI__DRP_H
++
++#ifdef __KERNEL__
++#include <linux/types.h>
++#else
++#include <stdint.h>
++#endif
++#include <linux/ioctl.h>
++#include <linux/drpai.h>
++
++#define DRP_IO_TYPE               (47)
++#define DRP_ASSIGN                _IOW (DRP_IO_TYPE, 0, drp_data_t)
++#define DRP_START                 _IOW (DRP_IO_TYPE, 1, drp_data_t)
++#define DRP_RESET                 _IO  (DRP_IO_TYPE, 2)
++#define DRP_GET_STATUS            _IOR (DRP_IO_TYPE, 3, drp_status_t)
++#define DRP_SET_SEQ               _IOW (DRP_IO_TYPE, 20, drp_seq_t)
++#define DRP_GET_CODEC_AREA        _IOR (DRP_IO_TYPE, 12, drp_data_t)
++
++#define DRP_STATUS_INIT           DRPAI_STATUS_INIT
++#define DRP_STATUS_IDLE           DRPAI_STATUS_IDLE
++#define DRP_STATUS_RUN            DRPAI_STATUS_RUN
++#define DRP_ERRINFO_SUCCESS       DRPAI_ERRINFO_SUCCESS
++#define DRP_ERRINFO_DRP_ERR       DRPAI_ERRINFO_DRP_ERR
++#define DRP_ERRINFO_RESET         DRPAI_ERRINFO_RESET
++#define DRP_RESERVED_NUM          DRPAI_RESERVED_NUM
++#define DRP_SEQ_NUM               (20)
++#define DRP_EXE_AI                (0)
++#define DRP_EXE_DRP               (2)
++#define DRP_DRP_NOLOAD            (0)
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef drpai_data_t drp_data_t;
++
++typedef drpai_status_t drp_status_t;
++
++typedef struct drp_seq
++{
++    uint32_t        num;
++    uint32_t        order[DRP_SEQ_NUM];
++    uint32_t        address;
++} drp_seq_t;
++
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _UAPI__DRP_H */

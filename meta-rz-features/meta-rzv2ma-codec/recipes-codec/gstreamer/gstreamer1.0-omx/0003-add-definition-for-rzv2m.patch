@@ -1,0 +1,17 @@
+diff --git a/omx/gstomx.h b/omx/gstomx.h
+index 0115114..e887a4a 100644
+--- a/omx/gstomx.h
++++ b/omx/gstomx.h
+@@ -32,6 +32,9 @@
+ #ifdef HAVE_CONFIG_H
+ #include "config.h"
+ #endif
++#ifdef USE_OMX_TARGET_RCAR
++#define OMX_TARGET_RCAR_RZV2M
++#endif
+ 
+ #ifdef GST_OMX_STRUCT_PACKING
+ # if GST_OMX_STRUCT_PACKING == 1
+-- 
+2.7.4
+

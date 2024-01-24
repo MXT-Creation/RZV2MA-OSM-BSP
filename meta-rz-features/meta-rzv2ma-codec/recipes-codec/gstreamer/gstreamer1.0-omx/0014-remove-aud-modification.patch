@@ -1,0 +1,64 @@
+--- a/omx/gstomxvideodec.c	2022-10-13 17:55:28.000000000 +0900
++++ b/omx/gstomxvideodec.c	2022-10-26 19:23:54.000000000 +0900
+@@ -3405,7 +3405,7 @@
+ 
+           /* remove AUD */
+           startcode = gst_omx_video_dec_get_startcode_length(&map.data[offset], data_end, &startcode_len);
+-          while ((startcode == &map.data[offset]) && (offset + startcode_len + 2 <= buf->omx_buf->nFilledLen)) {
++          while ((startcode == &map.data[offset]) && (offset + startcode_len + 1 <= buf->omx_buf->nFilledLen)) {
+             next_nal = &map.data[offset + startcode_len];
+             next_nal_unit_type = *next_nal & NAL_UNIT_MASK;
+ 
+@@ -3413,13 +3413,18 @@
+               GST_LOG_OBJECT (self,
+                 "Remove AUD data, offset=%u startcode_len=%u",
+                 offset, startcode_len);
+-              offset += startcode_len + 2;
+-              buf->omx_buf->nFilledLen -= startcode_len + 2;
++              startcode = gst_omx_video_dec_get_startcode_length(next_nal, data_end, &startcode_len);
++              if (NULL != startcode) {
++                  offset += startcode - &map.data[offset];
++                  buf->omx_buf->nFilledLen -= startcode - &map.data[offset];
++              } else {
++                  offset = buf->omx_buf->nFilledLen;
++                  buf->omx_buf->nFilledLen = 0;
++              }
+             }
+             else {
+               break;
+             }
+-            startcode = gst_omx_video_dec_get_startcode_length(&map.data[offset], data_end, &startcode_len);
+           }
+ 
+           startcode = gst_omx_video_dec_get_startcode_length(&map.data[offset], data_end, &startcode_len);
+@@ -3468,7 +3473,7 @@
+ 
+           /* remove AUD */
+           startcode = gst_omx_video_dec_get_startcode_length(&map.data[offset], data_end, &startcode_len);
+-          while ((startcode == &map.data[offset]) && (offset + startcode_len + 2 <= buf->omx_buf->nFilledLen)) {
++          while ((startcode == &map.data[offset]) && (offset + startcode_len + 1 <= buf->omx_buf->nFilledLen)) {
+             next_nal = &map.data[offset + startcode_len];
+             next_nal_unit_type = (*next_nal & NAL_UNIT_MASK) >> 1;
+ 
+@@ -3476,13 +3481,18 @@
+               GST_LOG_OBJECT (self,
+                 "Remove AUD data, offset=%u startcode_len=%u",
+                 offset, startcode_len);
+-              offset += startcode_len + 2;
+-              buf->omx_buf->nFilledLen -= startcode_len + 2;
++              startcode = gst_omx_video_dec_get_startcode_length(next_nal, data_end, &startcode_len);
++              if (NULL != startcode) {
++                  offset += startcode - &map.data[offset];
++                  buf->omx_buf->nFilledLen -= startcode - &map.data[offset];
++              } else {
++                  offset = buf->omx_buf->nFilledLen;
++                  buf->omx_buf->nFilledLen = 0;
++              }
+             }
+             else {
+               break;
+             }
+-            startcode = gst_omx_video_dec_get_startcode_length(&map.data[offset], data_end, &startcode_len);
+           }
+ 
+           startcode = gst_omx_video_dec_get_startcode_length(&map.data[offset], data_end, &startcode_len);

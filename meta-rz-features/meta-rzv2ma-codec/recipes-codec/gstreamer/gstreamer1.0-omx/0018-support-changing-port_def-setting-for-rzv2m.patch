@@ -1,0 +1,14 @@
+diff -ur a/omx/gstomxvideodec.c b/omx/gstomxvideodec.c
+--- a/omx/gstomxvideodec.c	2022-11-02 15:47:47.474689910 +0900
++++ b/omx/gstomxvideodec.c	2022-11-02 15:47:12.010690634 +0900
+@@ -650,8 +650,8 @@
+   if (!get_crop_info (self, &cinfo))
+     goto done;
+ 
+-  if (vinfo->width != port_def->format.video.nFrameWidth ||
+-      vinfo->height != port_def->format.video.nFrameHeight) {
++  if (vinfo->width > port_def->format.video.nFrameWidth ||
++      vinfo->height > port_def->format.video.nFrameHeight) {
+     GST_ERROR_OBJECT (self, "Resolution do not match: port=%ux%u vinfo =%dx%d,"
+         "crop left=%d, crop top=%d",
+         (guint) port_def->format.video.nFrameWidth,

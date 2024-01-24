@@ -1,0 +1,20 @@
+diff --git a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts
+index 3735c61..b672dfa 100644
+--- a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts
++++ b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts
+@@ -121,6 +121,15 @@
+         regulator-boot-on;
+         regulator-always-on;
+     };
++
++    udmabuf@0 {
++        compatible = "ikwzm,u-dma-buf";
++        device-name = "udmabuf0";
++        minor-number = <0>;
++        size = <0x1000000>; // 16MiB
++        dma-coherent;
++        memory-region = <&image_buf0>;
++    };
+ };
+ 
+ &cpg {

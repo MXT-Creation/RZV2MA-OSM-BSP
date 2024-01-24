@@ -1,0 +1,5 @@
+--- a/omx/gstomxvideoenc.c
++++ b/omx/gstomxvideoenc.c
+@@ -2015 +2015 @@ gst_omx_video_enc_update_input_port (GstOMXVideoEn
+-          gst_omx_video_calc_power(2, stride, &(port_def.format.video.nStride));
++          port_def.format.video.nStride = GST_ROUND_UP_128 (stride);

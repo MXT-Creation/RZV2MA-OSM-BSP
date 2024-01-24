@@ -1,0 +1,394 @@
+diff --git a/omx/gstomxvideodec.c b/omx/gstomxvideodec.c
+index ec3a1c3..5bc8502 100644
+--- a/omx/gstomxvideodec.c
++++ b/omx/gstomxvideodec.c
+@@ -57,6 +57,10 @@
+ #include "OMXR_Extension_vdcmn.h"
+ #endif
+ #include "gstomxwmvdec.h"
++#ifdef OMX_TARGET_RCAR_RZV2M
++#include "gstomxh264dec.h"
++#include "gstomxh265dec.h"
++#endif
+ 
+ GST_DEBUG_CATEGORY_STATIC (gst_omx_video_dec_debug_category);
+ #define GST_CAT_DEFAULT gst_omx_video_dec_debug_category
+@@ -92,6 +96,10 @@ static gboolean gst_omx_video_dec_deallocate_output_buffers (GstOMXVideoDec
+ 
+ static gboolean get_crop_info (GstOMXVideoDec * self, crop_info * c_info);
+ 
++#ifdef OMX_TARGET_RCAR_RZV2M
++static void gst_omx_rzv2m_copy_data(GstOMXVideoDec *self, GstVideoInfo *vinfo, GstVideoFrame frame, crop_info cinfo, const guint8 *src);
++#endif
++
+ enum
+ {
+   PROP_0,
+@@ -626,6 +634,188 @@ gst_omx_video_dec_change_state (GstElement * element, GstStateChange transition)
+   return ret;
+ }
+ 
++#ifdef OMX_TARGET_RCAR_RZV2M
++#define U32_MAX (0xFFFFFFFF)
++#define LOG2_16 (4)
++#define LOG2_64 (6)
++#define LOG2_4  (2)
++static void gst_omx_rzv2m_copy_data(GstOMXVideoDec *self, GstVideoInfo *vinfo, GstVideoFrame frame, crop_info cinfo, const guint8 *src)
++{
++  int log2th = 7;
++  int log2tv = 5;
++
++  int x = 0;
++  int y = 0;
++  int x_in_tile = 0;
++  int y_in_tile = 0;
++  char *p_dst0 = NULL;
++  char *p_dst1 = NULL;
++  int tile_offset = 0;
++  int unit64x16_offset = 0;
++  int unit16x4_offset = 0;
++  int offset_c = 0;
++  int mask_x_in_tile = 0;
++  int mask_y_in_tile = 0;
++  int mask_x_in_64x16 = 0x3F;
++  int mask_y_in_64x16 = 0x0F;
++  int mask_x_in_16x4 = 0x0F;
++  int mask_y_in_16x4 = 0x03;
++  int x_left = 0;
++  int x_right = 0;
++  int x_end = 0;
++  int y_top = 0;
++  int y_bot = 0;
++  int y_end = 0;
++  int log2stride = -1;
++  int stride = 0;
++  int tmp_stride = 0;
++  int width = 0;
++  int height = 0;
++
++  if (!vinfo) {
++    return;
++  }
++
++  width = GST_VIDEO_INFO_WIDTH (vinfo);
++  height = GST_VIDEO_INFO_HEIGHT (vinfo);
++
++  if (width <= 0) {
++    GST_ERROR_OBJECT (self, "width size is invalid: %d\n", width);
++    return;
++  }
++
++  /* calc stride */
++  gst_omx_video_calc_power(2, width, &stride);
++
++  /* calc log2(stride) */
++  tmp_stride = stride;
++  while (tmp_stride != 0) {
++    log2stride++;
++    tmp_stride /= 2;
++  }
++
++  mask_x_in_tile = ~(U32_MAX << log2th);   /* mask for x in tile */
++  mask_y_in_tile = ~(U32_MAX << log2tv);   /* mask for y in tile */
++
++  /* crop info */
++  y_top = cinfo.crop_top;
++  x_left = cinfo.crop_left;
++
++  /** Luma **/
++  y_bot = height;
++  y_end = GST_ROUND_UP_32 (y_bot);
++  x_right = width;
++  x_end = GST_ROUND_UP_128 (x_right);
++
++  if (GST_VIDEO_INFO_IS_INTERLACED (vinfo)) {
++    y_top += 4;
++    y_bot += 4;
++  }
++
++  p_dst0 = GST_VIDEO_FRAME_PLANE_DATA (&frame, 0);
++  for (y = y_top; y < y_bot; y++) {
++    for (x = x_left; x < x_right; x++) {
++      tile_offset = (((y >> log2tv) << log2tv) << log2stride) + (((x >> log2th) << log2th) << log2tv);
++      x_in_tile = x & mask_x_in_tile;
++      y_in_tile = y & mask_y_in_tile;
++      unit64x16_offset = (((y_in_tile >> LOG2_16) << LOG2_16) << log2th) + (((x_in_tile
++                         >> LOG2_64) << LOG2_64) << LOG2_16);
++      unit16x4_offset = ((((y & mask_y_in_64x16) >> LOG2_4) << LOG2_4) << LOG2_64)
++                        + ((((x & mask_x_in_64x16) >> LOG2_16) << LOG2_16) << LOG2_4);
++      *p_dst0++ = *(src + tile_offset + unit64x16_offset + unit16x4_offset + (y & mask_y_in_16x4)
++                    * 16 + (x & mask_x_in_16x4));
++    }
++
++#if 0
++    for (; x < x_end; x++) {
++      *p_dst0++ = 0;
++    }
++#endif
++  }
++
++#if 0
++  for (; y < y_end; y++) {
++    for (x = x_left; x < x_end; x++) {
++      *p_dst0++ = 0;
++    }
++  }
++#endif
++
++  /** Chroma **/
++  switch (GST_VIDEO_INFO_N_PLANES (vinfo)) {
++    case 2: // NV12
++      p_dst0 = GST_VIDEO_FRAME_PLANE_DATA (&frame, 1);
++      p_dst1 = NULL;
++      break;
++    case 3: // I420
++      p_dst0 = GST_VIDEO_FRAME_PLANE_DATA (&frame, 1);
++      p_dst1 = GST_VIDEO_FRAME_PLANE_DATA (&frame, 2);
++      break;
++    default:
++      // not support
++      return;
++  }
++
++  /* update x and y position info */
++  y_bot = (height + 1) / 2;
++  y_end = GST_ROUND_UP_32 (y_bot);
++  x_right = GST_ROUND_UP_2 (width);
++  x_end = GST_ROUND_UP_128 (x_right);
++
++  if (GST_VIDEO_INFO_IS_INTERLACED (vinfo)) {
++    y_top += 4;
++    y_bot += 4;
++  }
++
++  /* update src position */
++  src = src + (stride * GST_ROUND_UP_32(height));
++
++  for (y = y_top; y < y_bot; y++) {
++    for (x = x_left; x < x_right; x += 2) {
++      tile_offset = (((y >> log2tv) << log2tv) << log2stride) + (((x >> log2th) << log2th) << log2tv);
++      x_in_tile = x & mask_x_in_tile;
++      y_in_tile = y & mask_y_in_tile;
++      unit64x16_offset = (((y_in_tile >> LOG2_16) << LOG2_16) << log2th) + (((x_in_tile
++                         >> LOG2_64) << LOG2_64) << LOG2_16);
++      unit16x4_offset = ((((y & mask_y_in_64x16) >> LOG2_4) << LOG2_4) << LOG2_64)
++                        + ((((x & mask_x_in_64x16) >> LOG2_16) << LOG2_16) << LOG2_4);
++      offset_c = tile_offset + unit64x16_offset + unit16x4_offset + (y & mask_y_in_16x4) * 16
++                 + (x & mask_x_in_16x4);
++      *p_dst0++ = *(src + offset_c);
++      if (p_dst1) { // I420
++        *p_dst1++ = *(src + offset_c + 1);
++      } else { // NV12
++        *p_dst0++ = *(src + offset_c + 1);
++      }
++    }
++
++#if 0
++    for (; x < x_end; x += 2) {
++      *p_dst0++ = 0;
++      if (p_dst1) { // I420
++        *p_dst1++ = 0;
++      } else { // NV12
++        *p_dst0++ = 0;
++      }
++    }
++#endif
++  }
++
++#if 0
++  for (; y < y_end; y++) {
++    for (x = x_left; x < x_end; x += 2) {
++        *p_dst0++ = 0;
++      if (p_dst1) { // I420
++        *p_dst1++ = 0;
++      } else { // NV12
++        *p_dst0++ = 0;
++      }
++    }
++  }
++#endif
++}
++#endif /* OMX_TARGET_RCAR_RZV2M */
++
+ static gboolean
+ gst_omx_video_dec_fill_buffer (GstOMXVideoDec * self,
+     GstOMXBuffer * inbuf, GstBuffer * outbuf)
+@@ -734,6 +924,12 @@ gst_omx_video_dec_fill_buffer (GstOMXVideoDec * self,
+     }
+ 
+     src = inbuf->omx_buf->pBuffer + inbuf->omx_buf->nOffset;
++#ifdef OMX_TARGET_RCAR_RZV2M
++    /* RZV2M supports only I420 or NV12 formats */
++    if (GST_VIDEO_INFO_FORMAT (vinfo) == GST_VIDEO_FORMAT_I420 || GST_VIDEO_INFO_FORMAT (vinfo) == GST_VIDEO_FORMAT_NV12) {
++      gst_omx_rzv2m_copy_data (self, vinfo, frame, cinfo, src);
++    } else
++#endif /* OMX_TARGET_RCAR_RZV2M */
+     for (p = 0; p < GST_VIDEO_INFO_N_PLANES (vinfo); p++) {
+       const guint8 *data;
+       guint8 *dst;
+@@ -1887,6 +2083,14 @@ gst_omx_video_dec_loop (GstOMXVideoDec * self)
+         goto caps_failed;
+       }
+ 
++#ifdef OMX_TARGET_RCAR_RZV2M
++      /* Cannot get correct width and height when using H265 decorder. */
++      if (port_def.format.video.nFrameWidth == 0 || port_def.format.video.nFrameHeight == 0) {
++          port_def.format.video.nFrameWidth = port->port_def.format.video.nFrameWidth;
++          port_def.format.video.nFrameHeight = port->port_def.format.video.nFrameHeight;
++      }
++#endif
++
+       GST_DEBUG_OBJECT (self,
+           "Setting output state: format %s (%d), width %u, height %u",
+           gst_video_format_to_string (format),
+@@ -2951,6 +3155,23 @@ gst_omx_video_dec_set_format (GstVideoDecoder * decoder,
+   /* To make source code flexible, accept getting port_def param again */
+ #endif
+ 
++#ifdef OMX_TARGET_RCAR_RZV2M
++  { /* update output resolution */
++      OMX_PARAM_PORTDEFINITIONTYPE out_port_def;
++      out_port_def.format.video.nFrameWidth = info->width;
++      out_port_def.format.video.nFrameHeight = info->height;
++      out_port_def.format.video.nStride = info->width;
++      gst_omx_video_calc_power(2, info->width, &(out_port_def.format.video.nStride));        // align power of 2
++      out_port_def.format.video.nSliceHeight = GST_ROUND_UP_32 (info->height); // align 32
++
++      out_port_def.nBufferSize = (out_port_def.format.video.nStride * out_port_def.format.video.nSliceHeight * 3) / 2;
++
++      if (gst_omx_port_update_port_definition (self->dec_out_port,
++             &out_port_def) != OMX_ErrorNone)
++        return FALSE;
++  }
++#endif
++
+   if (gst_omx_port_update_port_definition (self->dec_out_port,
+           NULL) != OMX_ErrorNone)
+     return FALSE;
+@@ -3308,6 +3529,123 @@ gst_omx_video_dec_handle_frame (GstVideoDecoder * decoder,
+         }
+         gst_buffer_extract (frame->input_buffer, offset,
+             buf->omx_buf->pBuffer + omx_offset, buf->omx_buf->nFilledLen);
++#ifdef OMX_TARGET_RCAR_RZV2M
++      } else if (GST_IS_OMX_H264_DEC (self) || GST_IS_OMX_H265_DEC (self)) {
++        GstMapInfo map;
++        int idx;
++        int frame_split_offset = -1;
++        int found_decode_info = 0;
++        int found_key_frame = 0;
++        #define START_PLUS_SZ (4 + 1) // 00 00 00 01 xx
++
++        if (!gst_buffer_map (frame->input_buffer, &map, GST_MAP_READ)) {
++          GST_ERROR_OBJECT (self, "Failed to create a GstBuffer mapping");
++          goto map_failed;
++        }
++
++        /* remove AUD */
++        while (offset + 6 <= buf->omx_buf->nFilledLen) {
++          if (map.data[offset] == 0x00 && map.data[offset + 1] == 0x00 && map.data[offset + 2] == 0x00
++            && map.data[offset + 3] == 0x01 && map.data[offset + 4] == 0x09) {
++            GST_LOG_OBJECT (self,
++              "Remove AUD data [%02x %02x %02x %02x %02x %02x], offset=%u",
++              map.data[offset + 0], map.data[offset + 1], map.data[offset + 2],
++              map.data[offset + 3], map.data[offset + 4], map.data[offset + 5],
++              offset);
++            offset += 6;
++            buf->omx_buf->nFilledLen -= 6;
++          }
++          else {
++            break;
++          }
++        }
++
++        if (GST_IS_OMX_H264_DEC (self)) {
++          #define NAL_UNIT_MASK    (0x1F)
++          #define NAL_UNIT_SPS     (7)
++          #define NAL_UNIT_PPS     (8)
++          #define NAL_UNIT_I_FRAME (5)
++
++          if (offset + START_PLUS_SZ <= buf->omx_buf->nFilledLen) {
++            if (map.data[offset] == 0x00 && map.data[offset + 1] == 0x00 && map.data[offset + 2] == 0x00 && map.data[offset + 3] == 0x01) {
++              if ((map.data[offset + 4] & NAL_UNIT_MASK) == NAL_UNIT_SPS
++                || (map.data[offset + 4] & NAL_UNIT_MASK) == NAL_UNIT_PPS) {
++                found_decode_info = 1;
++                buf->omx_buf->nFlags |= OMX_BUFFERFLAG_CODECCONFIG;
++              }
++              else if ((map.data[offset + 4] & NAL_UNIT_MASK) == NAL_UNIT_I_FRAME) {
++                found_key_frame = 1;
++              }
++            }
++
++            for (idx = offset + START_PLUS_SZ; idx < buf->omx_buf->nFilledLen - START_PLUS_SZ; idx++) {
++              if (map.data[idx] == 0x00 && map.data[idx + 1] == 0x00 && map.data[idx + 2] == 0x00 && map.data[idx + 3] == 0x01) {
++                /* If the frame data starts with SPS/PPS, split at the next NAL that is not SPS/PPS.
++                 * If the frame data starts with I-Frame, split at the next NAL.
++                 * If the frame data doesn't start with SPS/PPS, split at the next SPS/PPS NAL.
++                 * Split at the next I-Frame NAL.
++                 */
++                if ((found_decode_info && (map.data[idx + 4] & NAL_UNIT_MASK) != NAL_UNIT_SPS && (map.data[idx + 4] & NAL_UNIT_MASK) != NAL_UNIT_PPS)
++                  || (found_key_frame)
++                  || (!found_decode_info && ((map.data[idx + 4] & NAL_UNIT_MASK) == NAL_UNIT_SPS || (map.data[idx + 4] & NAL_UNIT_MASK) == NAL_UNIT_PPS))
++                  || ((map.data[idx + 4] & NAL_UNIT_MASK) == NAL_UNIT_I_FRAME)) {
++                  frame_split_offset = idx - offset;
++                  break;
++                }
++              }
++            }
++          }
++        } else if (GST_IS_OMX_H265_DEC (self)) {
++          #define NAL_UNIT_VPS (0x40)
++          #define NAL_UNIT_SPS (0x42)
++          #define NAL_UNIT_PPS (0x44)
++          #define NAL_UNIT_I_FRAME_16 (0x20)
++          #define NAL_UNIT_I_FRAME_17 (0x22)
++          #define NAL_UNIT_I_FRAME_18 (0x24)
++          #define NAL_UNIT_I_FRAME_19 (0x26)
++          #define NAL_UNIT_I_FRAME_20 (0x28)
++          #define NAL_UNIT_I_FRAME_21 (0x2A)
++          if (offset + START_PLUS_SZ <= buf->omx_buf->nFilledLen) {
++            if (map.data[offset] == 0x00 && map.data[offset + 1] == 0x00 && map.data[offset + 2] == 0x00 && map.data[offset + 3] == 0x01) {
++              if (map.data[offset + 4] == NAL_UNIT_VPS || map.data[offset + 4] == NAL_UNIT_SPS || map.data[offset + 4] == NAL_UNIT_PPS) {
++                found_decode_info = 1;
++                buf->omx_buf->nFlags |= OMX_BUFFERFLAG_CODECCONFIG;
++              } else if (map.data[offset + 4] == NAL_UNIT_I_FRAME_16 || map.data[offset + 4] == NAL_UNIT_I_FRAME_17 || map.data[offset + 4] == NAL_UNIT_I_FRAME_18
++                         || map.data[offset + 4] == NAL_UNIT_I_FRAME_19 || map.data[offset + 4] == NAL_UNIT_I_FRAME_20 || map.data[offset + 4] == NAL_UNIT_I_FRAME_21) {
++                found_key_frame = 1;
++              }
++            }
++
++            for (idx = offset + START_PLUS_SZ; idx < buf->omx_buf->nFilledLen - START_PLUS_SZ; idx++) {
++              if (map.data[idx] == 0x00 && map.data[idx + 1] == 0x00 && map.data[idx + 2] == 0x00 && map.data[idx + 3] == 0x01) {
++                /* If the frame data starts with VPS/SPS/PPS, split at the next NAL that is not VPS/SPS/PPS.
++                 * If the frame data starts with I-Frame, split at the next NAL.
++                 * If the frame data doesn't start with VPS/SPS/PPS, split at the next VPS/SPS/PPS NAL.
++                 * Split at the next I-Frame NAL.
++                 */
++                if ((found_decode_info && map.data[idx + 4] != NAL_UNIT_VPS && map.data[idx + 4] != NAL_UNIT_SPS && map.data[idx + 4] != NAL_UNIT_PPS)
++                  || (found_key_frame)
++                  || (!found_decode_info && (map.data[idx + 4] == NAL_UNIT_VPS || map.data[idx + 4] == NAL_UNIT_SPS || map.data[idx + 4] == NAL_UNIT_PPS))
++                  || (map.data[offset + 4] == NAL_UNIT_I_FRAME_16 || map.data[offset + 4] == NAL_UNIT_I_FRAME_17 || map.data[offset + 4] == NAL_UNIT_I_FRAME_18
++                         || map.data[offset + 4] == NAL_UNIT_I_FRAME_19 || map.data[offset + 4] == NAL_UNIT_I_FRAME_20 || map.data[offset + 4] == NAL_UNIT_I_FRAME_21)) {
++                  frame_split_offset = idx - offset;
++                  break;
++                }
++              }
++            }
++          }
++        }
++        gst_buffer_unmap (frame->input_buffer, &map);
++
++        if (frame_split_offset > 0) {
++            /* Split frame data */
++            buf->omx_buf->nFilledLen = frame_split_offset;
++            buf->omx_buf->nFlags |= OMX_BUFFERFLAG_CODECCONFIG;
++        }
++
++        gst_buffer_extract (frame->input_buffer, offset,
++            buf->omx_buf->pBuffer + buf->omx_buf->nOffset, buf->omx_buf->nFilledLen);
++#endif
+       } else {
+         gst_buffer_extract (frame->input_buffer, offset,
+             buf->omx_buf->pBuffer + buf->omx_buf->nOffset,
+-- 
+2.7.4
+

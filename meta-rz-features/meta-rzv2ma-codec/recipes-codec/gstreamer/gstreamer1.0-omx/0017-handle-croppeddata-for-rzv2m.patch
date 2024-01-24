@@ -1,0 +1,57 @@
+diff -ur a/omx/gstomxvideodec.c b/omx/gstomxvideodec.c
+--- a/omx/gstomxvideodec.c	2022-10-31 13:16:20.000000000 +0900
++++ b/omx/gstomxvideodec.c	2022-11-01 18:38:36.904243821 +0900
+@@ -1747,6 +1747,10 @@
+ 
+   c_info->crop_left = crop.nLeft;
+   c_info->crop_top = crop.nTop;
++#ifdef OMX_TARGET_RCAR_RZV2M
++  c_info->crop_nWidth = crop.nWidth;
++  c_info->crop_nHeight = crop.nHeight;
++#endif
+ 
+   return TRUE;
+ }
+@@ -1794,8 +1798,13 @@
+   port = self->dec_out_port;
+   gst_omx_port_get_port_definition (port, &port_def);
+ 
++#ifdef OMX_TARGET_RCAR_RZV2M
++  cropped_width = cinfo->crop_nWidth;
++  cropped_height = cinfo->crop_nHeight;
++#else
+   cropped_width = port_def.format.video.nFrameWidth - cinfo->crop_left;
+   cropped_height = port_def.format.video.nFrameHeight - cinfo->crop_top;
++#endif
+ 
+   if (state_width != cropped_width || state_height != cropped_height) {
+     gst_video_decoder_set_output_state (GST_VIDEO_DECODER (self),
+@@ -1982,10 +1991,14 @@
+     if (!get_crop_info (self, &cinfo))
+       goto component_error;
+ 
++#ifndef OMX_TARGET_RCAR_RZV2M
+     if (cinfo.crop_left || cinfo.crop_top) {
++#endif
+       if (!update_output_state (self, &cinfo))
+         goto caps_failed;
++#ifndef OMX_TARGET_RCAR_RZV2M
+     }
++#endif
+   }
+ 
+   if (!frame && (buf->omx_buf->nFilledLen > 0 || buf->eglimage)) {
+diff -ur a/omx/gstomxvideodec.h b/omx/gstomxvideodec.h
+--- a/omx/gstomxvideodec.h	2022-10-26 21:34:15.000000000 +0900
++++ b/omx/gstomxvideodec.h	2022-11-01 16:59:00.188365781 +0900
+@@ -59,6 +59,10 @@
+ {
+   gint crop_left;
+   gint crop_top;
++#ifdef OMX_TARGET_RCAR_RZV2M
++  gint crop_nWidth;
++  gint crop_nHeight;
++#endif
+ };
+ 
+ struct _GstOMXVideoDec
