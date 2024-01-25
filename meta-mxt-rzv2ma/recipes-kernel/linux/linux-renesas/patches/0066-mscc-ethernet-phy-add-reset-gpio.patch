@@ -1,0 +1,23 @@
+From 0758c157bfe25d32102942b7bb61a254bd7da571 Mon Sep 17 00:00:00 2001
+Date: Sun, 18 Jun 2023 16:50:18 +0300
+Subject: [PATCH] mscc-ethernet-phy-add-reset-gpio
+
+---
+ arch/arm64/boot/dts/renesas/r9a09g055ma3gbg.dtsi | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg.dtsi b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg.dtsi
+index fccf85cff..a88ae1810 100755
+--- a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg.dtsi
++++ b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg.dtsi
+@@ -605,6 +605,7 @@ GIC_SPI 278 IRQ_TYPE_LEVEL_HIGH>,
+             phy0: ethernet-phy@0 {
+                 rxc-skew-ps = <1500>;
+                 reg = <0>;
++                reset-gpios = <&gpio13 0 GPIO_ACTIVE_LOW>;
+             };
+         };
+ 
+-- 
+2.40.1
+

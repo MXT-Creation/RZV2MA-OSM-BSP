@@ -1,0 +1,13 @@
+diff --git a/board/renesas/rzv2ma-dev/rzv2ma-dev.c b/board/renesas/rzv2ma-dev/rzv2ma-dev.c
+index 98c98d4840..c97e31323d 100755
+--- a/board/renesas/rzv2ma-dev/rzv2ma-dev.c
++++ b/board/renesas/rzv2ma-dev/rzv2ma-dev.c
+@@ -449,7 +449,7 @@ static void evk_cpg_init(void)
+ 		/**********************************/
+ 		/*    PWM0-15                     */
+ 		/**********************************/
+-		pwm_init();
++		//pwm_init();
+ 		
+ 		/**********************************/
+ 		/*    CSI0-5                      */

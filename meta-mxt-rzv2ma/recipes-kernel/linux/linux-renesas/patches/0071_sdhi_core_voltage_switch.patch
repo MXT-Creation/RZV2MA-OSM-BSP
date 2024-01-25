@@ -1,0 +1,25 @@
+--- a/drivers/mmc/host/renesas_sdhi_core.c
++++ b/drivers/mmc/host/renesas_sdhi_core.c
+@@ -33,6 +33,7 @@
+ #include <linux/delay.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/sys_soc.h>
++#include <linux/gpio.h>
+ 
+ #include "renesas_sdhi.h"
+ #include "tmio_mmc.h"
+@@ -81,6 +82,14 @@ static int psc_voltage_switch(uint32_t pins, uint8_t voltage)
+        writel(data , remap_addr + B2REG_PSC_SDSEL_OFSET);
+        iounmap(remap_addr);
+ 
++	gpio_direction_output(160, GPIOF_DIR_OUT);
++	if (PSC_REG_SD_1_8V == voltage){
++		gpio_set_value(160, GPIOF_INIT_LOW);
++	}
++	else if (PSC_REG_SD_3_3V == voltage){
++		gpio_set_value(160, GPIOF_INIT_HIGH);
++	}
++
+        return 0;
+ }
+ 
