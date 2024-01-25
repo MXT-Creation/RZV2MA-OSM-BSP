@@ -7,5 +7,7 @@ IMAGE_INSTALL_append = " \
 	kernel-devicetree \
 	htop \
 	iperf3 \
+	app-usbcam-http \
+	app-usbcam-client \
 "
 
