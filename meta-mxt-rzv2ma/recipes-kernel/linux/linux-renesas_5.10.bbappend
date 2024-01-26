@@ -8,3 +8,5 @@ SRC_URI_append_r9a09g055ma3gbg = " \
    file://patches/0071_sdhi_core_voltage_switch.patch \
 "
 
+KERNEL_MODULE_AUTOLOAD += " uvcvideo "
+
