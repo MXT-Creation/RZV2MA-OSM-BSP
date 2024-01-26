@@ -40,25 +40,20 @@ class YoloV3Model :public IRecognizeModel
 {
 private:
     constexpr static  string_view LABEL_LIST = "coco-labels-2014_2017.txt";
-    constexpr static  string_view MODEL_NAME = "yolov3_cam";
     constexpr static  int32_t  YOLOV3_NUM_BB = 3;
     constexpr static int32_t  YOLOV3_NUM_INF_OUT_LAYER = 3;
-    constexpr static float  YOLOV3_TH_PROB = 0.5f;
-    constexpr static float  YOLOV3_TH_NMS = 0.5f;
     constexpr static int32_t  YOLOV3_MODEL_IN_W = 416;
     constexpr static int32_t  YOLOV3_MODEL_IN_H = 416;
 #ifdef MODEL_VGA
     constexpr static int32_t  YOLOV3_DRPAI_IN_WIDTH = 640;
     constexpr static int32_t  YOLOV3_DRPAI_IN_HEIGHT = 480;
-    constexpr static string_view MODEL_DIR = "yolov3_cam";
 #else
-    constexpr static string_view MODEL_DIR = "yolov3_cam_fhd";
     constexpr static int32_t  YOLOV3_DRPAI_IN_WIDTH = 1920;
     constexpr static int32_t  YOLOV3_DRPAI_IN_HEIGHT = 1080;
 
 #endif
 public:
-    YoloV3Model();
+    YoloV3Model(const char *model_name = nullptr);
     virtual ~YoloV3Model() {}
     virtual int32_t inf_post_process(float* arg);
     virtual shared_ptr<PredictNotifyBase> get_command();
@@ -67,6 +62,8 @@ public:
 private:
     void post_proc(float* floatarr, std::vector<detection>& det);
 
+    float th_prob{0.5f};
+    float th_nms{0.5f};
 
     /*****************************************
     * YOLOv3

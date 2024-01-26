@@ -21,6 +21,7 @@ SRC_URI = "file://src/ \
 	   file://resnet50_cam.tar.bz2 \
 	   file://tinyyolov2_cam.tar.bz2 \
 	   file://yolov3_cam.tar.bz2 \
+	   file://yolov3_helmet_safety_vest.tar.bz2 \
 	   file://coco-labels-2014_2017.txt \
 	   file://synset_words_imagenet.txt \
 "
@@ -39,11 +40,13 @@ do_install() {
 	install -d ${D}${APP_INSTALL_DIRECTORY}/resnet50_cam/
 	install -d ${D}${APP_INSTALL_DIRECTORY}/tinyyolov2_cam/
 	install -d ${D}${APP_INSTALL_DIRECTORY}/yolov3_cam/
+	install -d ${D}${APP_INSTALL_DIRECTORY}/yolov3_helmet_safety_vest/
 
 	cp -rf ${WORKDIR}/hrnet_cam/* ${D}${APP_INSTALL_DIRECTORY}/hrnet_cam/
 	cp -rf ${WORKDIR}/resnet50_cam/* ${D}${APP_INSTALL_DIRECTORY}/resnet50_cam/
 	cp -rf ${WORKDIR}/tinyyolov2_cam/* ${D}${APP_INSTALL_DIRECTORY}/tinyyolov2_cam/
 	cp -rf ${WORKDIR}/yolov3_cam/* ${D}${APP_INSTALL_DIRECTORY}/yolov3_cam/
+	cp -rf ${WORKDIR}/yolov3_helmet_safety_vest/* ${D}${APP_INSTALL_DIRECTORY}/yolov3_helmet_safety_vest/
 
 	install -m 0644 ${WORKDIR}/coco-labels-2014_2017.txt ${D}${APP_INSTALL_DIRECTORY}/
 	install -m 0644 ${WORKDIR}/synset_words_imagenet.txt ${D}${APP_INSTALL_DIRECTORY}/

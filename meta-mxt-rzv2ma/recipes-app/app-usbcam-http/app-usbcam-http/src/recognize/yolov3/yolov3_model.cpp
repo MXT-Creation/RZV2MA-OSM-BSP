@@ -32,11 +32,22 @@
  * @brief Construct a new Yolo V 3 Model:: Yolo V 3 Model object
  * 
  */
-YoloV3Model::YoloV3Model() :IRecognizeModel(MODEL_DIR.data(), MODEL_NAME.data(), YOLOV3_DRPAI_IN_WIDTH, YOLOV3_DRPAI_IN_HEIGHT, 2)
+YoloV3Model::YoloV3Model(const char *model_name) :IRecognizeModel(
+    model_name ? "yolov3_helmet_safety_vest" : "yolov3_cam",
+    model_name ? "yolov3_helmet_safety_vest" : "yolov3_cam",
+    YOLOV3_DRPAI_IN_WIDTH, YOLOV3_DRPAI_IN_HEIGHT, 2)
 {
     std::cout << "Yolo model" << std::endl;
 
-    label_file_map = YoloCommon::load_label_file(LABEL_LIST.data());
+    if (model_name) {
+        th_prob = 0.2f;
+        th_nms = 0.2f;
+        label_file_map = { "Helmet", "Safety Vest", "Head" };
+    } else {
+        th_prob = 0.5f;
+        th_nms = 0.5f;
+        label_file_map = YoloCommon::load_label_file(LABEL_LIST.data());
+    }
 
     num_class = label_file_map.size();
 
@@ -222,7 +233,7 @@ void YoloV3Model::post_proc(float* floatarr, vector<detection>& det)
 
                     /* Store the result into the list if the probability is more than the threshold */
                     probability = max_pred * objectness;
-                    if (probability > YOLOV3_TH_PROB)
+                    if (probability > th_prob)
                     {
                         d = { bb, pred_class, probability };
                         det.push_back(d);
@@ -232,6 +243,6 @@ void YoloV3Model::post_proc(float* floatarr, vector<detection>& det)
         }
     }
     /* Non-Maximum Supression filter */
-    filter_boxes_nms(det, det.size(), YOLOV3_TH_NMS);
+    filter_boxes_nms(det, det.size(), th_nms);
 
 }

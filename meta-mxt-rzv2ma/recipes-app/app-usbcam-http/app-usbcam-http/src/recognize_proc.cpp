@@ -63,6 +63,10 @@ void RecognizeProc::switch_model(std::string model)
     {
         p_recog_base->initialize(new TinyYoloV2Model());
     }
+    else if ("YOLOv3_Vest_Helmet" == model)
+    {
+        p_recog_base->initialize(new YoloV3Model("YOLOv3_Vest_Helmet"));
+    }
     else if ("YOLOv3" == model)
     {
         p_recog_base->initialize(new YoloV3Model());
