@@ -1,6 +1,2 @@
 meta-rz-features/meta-rz-drpai/recipes-app/ai-eva-sw/ai-eva-sw/ai-eva-sw_v7.4.0.tar.bz2 filter=lfs diff=lfs merge=lfs -text
-meta-mxt-rzv2ma/recipes-app/app-usbcam-http/app-usbcam-http/yolov3_cam.tar.bz2 filter=lfs diff=lfs merge=lfs -text
-meta-mxt-rzv2ma/recipes-app/app-usbcam-http/app-usbcam-http/hrnet_cam.tar.bz2 filter=lfs diff=lfs merge=lfs -text
-meta-mxt-rzv2ma/recipes-app/app-usbcam-http/app-usbcam-http/resnet50_cam.tar.bz2 filter=lfs diff=lfs merge=lfs -text
-meta-mxt-rzv2ma/recipes-app/app-usbcam-http/app-usbcam-http/tinyyolov2_cam.tar.bz2 filter=lfs diff=lfs merge=lfs -text
-meta-mxt-rzv2ma/recipes-app/app-usbcam-http/app-usbcam-http/yolov3_helmet_safety_vest.tar.bz2 filter=lfs diff=lfs merge=lfs -text
+meta-mxt-rzv2ma/recipes-app/app-usbcam-http/app-usbcam-http/*.tar.bz2 filter=lfs diff=lfs merge=lfs -text
