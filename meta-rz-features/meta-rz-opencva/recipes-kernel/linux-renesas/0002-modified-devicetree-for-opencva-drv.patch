@@ -1,0 +1,17 @@
+diff --git a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg_opencva.dtsi b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg_opencva.dtsi
+index 98adef4..8297272 100644
+--- a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg_opencva.dtsi
++++ b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg_opencva.dtsi
+@@ -5,3 +5,12 @@
+  * Copyright (C) 2023 Renesas Electronics Corp.
+  */
+ 
++&soc {
++    drpopencva@78000000 {
++        compatible = "renesas,rzv2ma-drpopencva";
++        reg = <0 0x78000000 0 0x0000000>;
++        memory-region = <&open_cv>;
++        linux-memory-region = < &{/memory@00000000} >;
++        status = "okay";
++    };
++};

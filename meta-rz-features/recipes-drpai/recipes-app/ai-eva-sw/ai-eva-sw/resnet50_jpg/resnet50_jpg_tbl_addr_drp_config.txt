@@ -1,5 +1,0 @@
-resize_hwc.mem                     581540320     198260
-imagescaler.mem                    581738592     176400
-maxpooling_k3_st2.mem              581914992     132808
-gap.mem                            582047808     140452
-softmax.mem                        582188272     152008
