@@ -5,5 +5,6 @@ SRC_URI_append_r9a09g055ma3gbg += "\
   file://rzv2ma_patch/1001-updated-uboot-disable_pwm.patch \
   file://rzv2ma_patch/1002-defconfig_enable_mscc_phy.patch \
   file://rzv2ma_patch/1003-enable_mscc_phy_clock.patch \
+  file://rzv2ma_patch/1004-configs-rzv2ma-extend-uboot-default-env-with-OpenCV-.patch \
 "
 
