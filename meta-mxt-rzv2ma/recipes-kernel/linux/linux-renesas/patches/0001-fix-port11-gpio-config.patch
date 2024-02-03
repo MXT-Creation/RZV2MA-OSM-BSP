@@ -1,0 +1,35 @@
+diff --git a/drivers/pinctrl/rzv2m/pfc-r8arzv2m.c b/drivers/pinctrl/rzv2m/pfc-r8arzv2m.c
+index 9b733bd94..ab5976a6a 100644
+--- a/drivers/pinctrl/rzv2m/pfc-r8arzv2m.c
++++ b/drivers/pinctrl/rzv2m/pfc-r8arzv2m.c
+@@ -2613,21 +2613,21 @@ static const struct rzv2m_pfc_config_reg config_regs[] = {
+ 	  }
+ 	},
+ 	{ RZV2M_CONFIG_REG(SEL, 0x2d0, BIT_WRITE_ENABLE, 4, 8, 32) {
+-		P3_PF0
+-		P3_PF1
+-		P3_PF2
+-		P3_PF3
++		P11_PF0
++		P11_PF1
++		P11_PF2
++		P11_PF3
+ 	  }
+ 	},
+ 	{ RZV2M_CONFIG_REG(SEL, 0x2d4, BIT_WRITE_ENABLE, 4, 8, 32) {
+-		P3_PF4
+-		P3_PF5
+-		P3_PF6
+-		P3_PF7
++		P11_PF4
++		P11_PF5
++		P11_PF6
++		P11_PF7
+ 	  }
+ 	},
+ 	{ RZV2M_CONFIG_REG(SEL, 0x2d8, BIT_WRITE_ENABLE, 4, 8, 8) {
+-		P3_PF8
++		P11_PF8
+ 	  }
+ 	},
+ 	{ RZV2M_CONFIG_REG(DI_MON, 0x2e0, BIT_WRITE_NONE, 1, 1, 9) {
