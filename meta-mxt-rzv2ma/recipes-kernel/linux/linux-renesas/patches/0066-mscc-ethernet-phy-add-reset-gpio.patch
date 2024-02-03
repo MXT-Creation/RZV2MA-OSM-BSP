@@ -14,7 +14,7 @@ index fccf85cff..a88ae1810 100755
              phy0: ethernet-phy@0 {
                  rxc-skew-ps = <1500>;
                  reg = <0>;
-+                reset-gpios = <&gpio13 0 GPIO_ACTIVE_LOW>;
++                reset-gpios = <&gpio11 0 GPIO_ACTIVE_LOW>;
              };
          };
  
