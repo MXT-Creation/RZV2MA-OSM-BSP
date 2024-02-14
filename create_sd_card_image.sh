@@ -107,7 +107,7 @@ mkdir -p $ROOTFS_DIR
 
 cp $(readlink -f ${BIN_DIR}/OpenCV_Bin.bin) $FAT_DIR/OpenCV_Bin.bin
 cp $(readlink -f ${BIN_DIR}/Codec_Bin.bin) $FAT_DIR/Codec_Bin.bin
-cp $(readlink -f $YOCTO_DEPLOY_DIR/Image) $FAT_DIR/
+cp $(readlink -f $YOCTO_DEPLOY_DIR/Image) $FAT_DIR/Image
 cp $(readlink -f $YOCTO_DEPLOY_DIR/r9a09g055ma3gbg-evaluation-board.dtb) $FAT_DIR/r9a09g055ma3gbg.dtb
 uncompress_rootfs_img_file "$ROOTFS_IMG_FILE" "$ROOTFS_DIR"
 
