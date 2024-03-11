@@ -9,10 +9,10 @@ index d1a643cf5a..ffc566e0fa 100644
 +	/* enable PHY */
 +	printf("Enable PHY 8541\n");
 +
-+	/* Set In/Out mask */
-+	*(volatile unsigned int*)(0xB6250000 + 0x1B4) = 0x080007FF;
-+	*(volatile unsigned int*)(0xB6250000 + 0x184) = 0x08000800;
-+	*(volatile unsigned int*)(0xB6250000 + 0x180) = 0x08000800;
++	/* Enable GBE PHY, Deassert RST OUT# */
++	*(volatile unsigned int*)(0xB6250000 + 0x2F4) = 0x00FF0000;
++	*(volatile unsigned int*)(0xB6250000 + 0x2C4) = 0x00030003;
++	*(volatile unsigned int*)(0xB6250000 + 0x2C0) = 0x00030003;
 +	/* wait 100ms */
 +	CMN_DelayInUSec(100*1000);
 +
