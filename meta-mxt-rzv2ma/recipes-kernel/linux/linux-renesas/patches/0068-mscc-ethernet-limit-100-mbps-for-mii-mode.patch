@@ -1,0 +1,13 @@
+diff --git a/drivers/net/ethernet/renesas/ravb_main.c b/drivers/net/ethernet/renesas/ravb_main.c
+index 9b5bdf8f4..df07cd5c9 100644
+--- a/drivers/net/ethernet/renesas/ravb_main.c
++++ b/drivers/net/ethernet/renesas/ravb_main.c
+@@ -1419,7 +1419,7 @@ static int ravb_phy_init(struct net_device *ndev)
+ 	/* This driver only support 10/100Mbit speeds on R-Car H3 ES1.0
+ 	 * at this time.
+ 	 */
+-	if (soc_device_match(r8a7795es10)) {
++	if (soc_device_match(r8a7795es10) && (iface == PHY_INTERFACE_MODE_MII)) {
+ 		err = phy_set_max_speed(phydev, SPEED_100);
+ 		if (err) {
+ 			netdev_err(ndev, "failed to limit PHY to 100Mbit/s\n");
