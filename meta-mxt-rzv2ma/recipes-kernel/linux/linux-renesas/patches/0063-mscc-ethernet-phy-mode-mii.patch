@@ -1,17 +1,12 @@
 diff --git a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts
-index c186961aa..ef1680f11 100644
+index c186961aa..9edc7c642 100644
 --- a/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts
 +++ b/arch/arm64/boot/dts/renesas/r9a09g055ma3gbg-evaluation-board.dts
-@@ -313,6 +313,12 @@ &eMM {
-     status = "okay";
- };
+@@ -315,6 +315,7 @@ &eMM {
  
-+&phy0 {
-+    reset-gpios = <&gpio11 0 GPIO_ACTIVE_LOW>;
-+    reset-assert-us = <20000>;
-+    reset-deassert-us = <50000>;
-+};
-+
  &avb {
      status = "okay";
++    phy-mode = "mii";
  };
+ 
+ &pwm0 {
