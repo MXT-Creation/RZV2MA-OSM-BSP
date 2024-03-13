@@ -7,7 +7,7 @@ index 9b5bdf8f4..df07cd5c9 100644
  	 * at this time.
  	 */
 -	if (soc_device_match(r8a7795es10)) {
-+	if (soc_device_match(r8a7795es10) && (iface == PHY_INTERFACE_MODE_MII)) {
++	if (soc_device_match(r8a7795es10) || (iface == PHY_INTERFACE_MODE_MII)) {
  		err = phy_set_max_speed(phydev, SPEED_100);
  		if (err) {
  			netdev_err(ndev, "failed to limit PHY to 100Mbit/s\n");
