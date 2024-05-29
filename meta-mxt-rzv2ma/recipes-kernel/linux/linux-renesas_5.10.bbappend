@@ -3,6 +3,7 @@ FILESEXTRAPATHS_prepend := "${THISDIR}/${PN}:"
 SRC_URI_append_r9a09g055ma3gbg = " \
    file://fragment-01-mxt.cfg \
    file://fragment-02-usb-ethernet.cfg \
+   file://fragment-03-nvme_pcie.cfg \
    file://patches/0001-fix-port11-gpio-config.patch \
    file://patches/0063-mscc-ethernet-phy-mode-mii.patch \
    file://patches/0066-mscc-ethernet-phy-add-reset-gpio.patch \
