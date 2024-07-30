@@ -1,25 +1,53 @@
 --- a/drivers/mmc/host/renesas_sdhi_core.c
 +++ b/drivers/mmc/host/renesas_sdhi_core.c
-@@ -33,6 +33,7 @@
- #include <linux/delay.h>
- #include <linux/regulator/consumer.h>
+@@ -35,6 +35,7 @@
+ #include <linux/sh_dma.h>
+ #include <linux/slab.h>
  #include <linux/sys_soc.h>
 +#include <linux/gpio.h>
  
  #include "renesas_sdhi.h"
  #include "tmio_mmc.h"
-@@ -81,6 +82,14 @@ static int psc_voltage_switch(uint32_t pins, uint8_t voltage)
-        writel(data , remap_addr + B2REG_PSC_SDSEL_OFSET);
-        iounmap(remap_addr);
+@@ -77,20 +78,23 @@
+        none,
+ };
  
+-static int psc_voltage_switch(uint32_t pins, uint8_t voltage)
++static int psc_voltage_switch(struct tmio_mmc_host *host, uint32_t pins, uint8_t voltage)
+ {
+ 
+        uint32_t data;
+-       void __iomem * remap_addr;
+ 
+-       remap_addr = ioremap(B2REG_PSC_BASE_ADDR,sizeof(*remap_addr));
+-       if (!remap_addr) {
+-              return -EINVAL;
+-       }
+-
+-       data = (voltage << pins) | BIT((pins+16));
+-       writel(data , remap_addr + B2REG_PSC_SDSEL_OFSET);
+-       iounmap(remap_addr);
 +	gpio_direction_output(160, GPIOF_DIR_OUT);
 +	if (PSC_REG_SD_1_8V == voltage){
 +		gpio_set_value(160, GPIOF_INIT_LOW);
++		dev_err(&host->pdev->dev, "MMC: Switch voltage to 1V8\n");
 +	}
 +	else if (PSC_REG_SD_3_3V == voltage){
 +		gpio_set_value(160, GPIOF_INIT_HIGH);
++		dev_err(&host->pdev->dev, "MMC: Switch voltage to 3V3\n");
 +	}
-+
++	else {
++	        dev_err(&host->pdev->dev, "MMC: UNKNOWN Voltage\n");
++	}
+ 
         return 0;
  }
- 
+@@ -289,7 +293,7 @@
+                default:
+                        return -EINVAL;
+                }
+-               return psc_voltage_switch(priv->psc_pins, psc_state);
++               return psc_voltage_switch(host, priv->psc_pins, psc_state);
+          }
+ 	else{
+ 		//The voltage of eMMC is fixed at 1.8V.
